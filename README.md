@@ -1,5 +1,13 @@
-# vehicle-api (VAPI)
-The VAPI is a technology agnostic API for accessing vehicle signals and services.
+# Vehicle API (VAPI)
+The VAPI Github repo contains both the VAPI specification and implementations of the VAPI specification.
+While the VAPI specification is technology agnostic, implementations will be restricted to one (or more) technology solutions.
+The term technology solutions refer in this context to the connectivity solution that is used between client and server,
+more specifically the message serialization/de-serialization, and the transport protocol for the message communication.
+
+The VAPI specification is found in the spec directory.
+VAPI implementations are found in the impl directory, where implemenations for different technology solutions and languages can be found.
+The following technology/language combinations are available:
+* [VISSR (VISSv3.x)](https://github.com/COVESA/vissr) / Go
 
 The datamodel used in VAPI is the [Hierarchical Information Model](https://covesa.github.io/hierarchical_information_model/) (HIM).
 
@@ -26,16 +34,22 @@ For services there is one procedure specified for each service.
 
 The procedure typically executes in the context of the caller, while the server actuating the service typically executes in a different process,
 and likely on a different execution platform.
-//  TODO: add pictures for signal arch and diff variants of service arch.
+
+For a client using the signal support in VAPI the logical architecture would typically look as shown below.
+![VAPI architecture with remote signal endpoints](/images/VAPI-architecture-base-signals.jpg)
+While signal endpoints are always on the "remote" side of the server,
+for services their implementations can be deployed either remotely or locally, as shown in the figures below.
+![VAPI architecture with remote service endpoints](/images/VAPI-architecture-remote-endpoint.jpg)
+![VAPI architecture with local service endpoints](/images/VAPI-architecture-local-endpoint.jpg)
 
 The protocol used for the communication between client and server is not specified by VAPI, it is an implementation decision.
 The currently only existing implementation uses the COVESA [Vehicle Information Service Specification]() (VISSv3.x),
-But VAPI is agnostic to which protocol that is used in the procedure implementations.
+but VAPI is agnostic to which protocol that is used in the procedure implementations.
 The existing implementation is written in Go. While a Go library can be integrated with C code implementations,
 ideally library implementations in other languages will be added later.
 
 The VAPI is currently in an incubation phase, particularly it needs to be extened with many more service group APIs,
-more examples ini different languages, etc. before it becomes a complete Vehicle Service API.
+more examples in different languages, etc. before it becomes a comprehensive Vehicle API.
 
 ## Contributors
 VAPI is an open standard and we invite anybody to contribute. Currently VAPI contains - among others - significant  contributions from

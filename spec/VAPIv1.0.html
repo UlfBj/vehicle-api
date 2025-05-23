@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset='utf-8'>
+    <title>Vehicle API version 1.0 (VAPIv1.0)</title>
+    <script src='https://www.w3.org/Tools/respec/respec-w3c' class='remove' defer></script>
+    <script class='remove'>
+      var respecConfig = {
+        latestVersion: null,
+        github: "https://github.com/UlfBj/vehicle-api",
+        specStatus: "base",
+        editors: [{
+          name: "Ulf Bjorkengren",
+          company: "Ford Motor Company",
+          companyURL: "https://www.ford.com",
+        }],
+        edDraftURI: "https://github.com/UlfBj/vehicle-api/tree/main/spec/VAPIv1.0.html",
+        shortName: "vapi1.0",
+        localBiblio: {
+          "VISSv3.0": {
+            title: "COVESA VISS version 3.0",
+            href: "https://raw.githack.com/COVESA/vehicle-information-service-specification/releases/tag/v3.0",
+            publisher: "Ulf Bjorkengren; Wonsuk Lee"
+          }
+        }
+      };
+    </script>
+    <style>
+      table.parameters, table.exceptions {
+          border-spacing: 0;
+          border-collapse:    collapse;
+          margin: 0.5em 0;
+          width:  100%;
+      }
+      table.parameters { border-bottom:  1px solid #90b8de; }
+      table.exceptions { border-bottom:  1px solid #deb890; }
+
+      .parameters th, .exceptions th {
+          color:  inherit;
+          padding:    3px 5px;
+          text-align: left;
+          font-weight:    normal;
+      }
+      .parameters th { color: #fff; background: #005a9c; }
+      .exceptions th { background: #deb890; }
+
+      .parameters td, .exceptions td {
+          padding:    3px 10px;
+          border-top: 1px solid #ddd;
+          vertical-align: top;
+      }
+
+      .parameters tr:first-child td, .exceptions tr:first-child td {
+          border-top: none;
+      }
+
+      .parameters td.prmName, .exceptions td.excName, .exceptions td.excCodeName {
+          width:  100px;
+      }
+
+      .parameters td.prmType {
+          width:  120px;
+      }
+
+      table.exceptions table {
+          border-spacing: 0;
+          border-collapse:    collapse;
+          width:  100%;
+      }
+
+      .simple {
+        width:100%;
+      }
+
+      thead th{
+        border-bottom: 1px solid black;
+      }
+
+      .simple tbody th{
+        width:33%;
+        background: white;
+        color: black;        
+      }
+      pre { white-space: pre-wrap;}
+  </style>    
+  </head>
+  <body>
+    <section id='abstract'>
+      <p>
+        The Vehicle API (VAPI) specification defines an interface for access to vehicle signals and services.
+        This access is realized by exposing a procedure-based interface to clients of it.
+        For vehicle services there i a one-to-one mapping between a service and a procedure.
+        For signals there are a set of reserved procedure signatures that are used to realize the signal access.
+        This specification is agnostic to the connectivity solution that is used in implementations of it.
+        A client may be deployed in-vehicle, but may also be deployed off-vehicle.
+        These details are abstracted in the interface and dealt with in the implementation of the interface.
+      </p>
+    </section>
+
+    <section id="introduction">
+      <h2>Introduction</h2>
+      <p>
+      This specification defines an interface for access to vehicle signals and services.
+      </p>
+    </section>
+
+    <section id="conformance"></section>
+
+    <section id="terminology">
+      <h2>Terminology</h2>
+      <p>
+      The acronym 'VAPIv1.0' is used to refer to this document, the VAPI version 1.0 specification.<br>
+      The acronym 'VSS' is used to refer to the <a href="https://github.com/COVESA/vehicle_signal_specification">'Vehicle Signal Specification'</a>
+      which is hosted by COVESA.<br>
+      The acronym 'HIM' is used to refer to the <a href="https://github.com/COVESA/hierarchical_information_model">'Hierarchical Information Specification'</a>
+      which is hosted by COVESA.<br>
+      The acronym 'VISS' is used to refer to the <a href="https://github.com/COVESA/vehicle-information-service-specification">'Vehicle Information Service Specification'</a>
+      which is hosted by COVESA.<br>
+      The acronym 'CVIS' is used to refer to the <a href="https://github.com/COVESA/commercial-vehicle-information-specifications">
+      'Commercial Vehicle Information Specifications'</a> which is hosted by COVESA.
+      </p>
+    </section>
+
+    <section id="vapi-overview">
+      <h2>VAPI Overview</h2>
+      <p>
+        VAPI procedures are characterized as belonging to one of the types Common, Signal, or Service.
+      <ul>
+          <li>
+            The Common type contains all procedures that are not invoked to a specific vehicle, which the other two groups are.
+          </li>
+          <li>
+            The Signal type contains the procedures that a client may use for access to vehicle signals.
+          </li>
+          <li>
+            The Service type contains the procedures that a client may use for access to vehicle services.
+          </li>
+      </ul>
+      <strong>Procedure characteristics:</strong>
+      <ul>
+        <li>
+        Procedures that are invoked to a specific vehicle must include a vehicle ID as input parameter.
+        </li>
+        <li>
+        Procedures representing services with an extended execution time shall include a pointer to a callback procedure as input parameter.
+        The procedure must invoke the callback procedure at the successful termination of the service, or if the service terminates unsuccessfully.
+        It may issue multiple invokations during the execution.
+        A client that does not want to receive callback may set the input callback pointer to nil.
+        </li>
+        <li>
+        The output data that is defined in the procedure signature must contain a ProcedureStatus parameter and an ErrorData parameter.<br>
+        If the ProcedureStatus parameter is set to indicate unsuccessful execution then the ErrorData must be populated with information about the failure,
+        else the poiner to it shall be set to nil.<br>
+        The output data may include service specific parameters.<br>
+        If the service does not terminate successfully then all service specific output parameters are invalid.<br>
+        The output data shall be returned synchronously with the call of the service.
+        Any asynchronous event messages shall use the same output data structure.<br>
+        The output data shall be contained in a single struct.
+        </li>
+        <li>
+        Procedures with an extended execution time must return a unique reference to the execution session.
+        A client may use this reference to asynchronously terminate the ongoing execution.
+        </li>
+        <li>
+        Procedures that change the state of the vehicle can typically not be executed in multiple parallelly executing instances,
+        while the opposite is typically true for procedures that do not change the state of the vehicle.<br>
+        Procedures that do not support multiple execution instances must set the Status to ONGOING in the output if it is called
+        during execution of a previous call.<br>
+        It shall be stated in the procedure documentation if it supports multiple execution instances.
+        If not stated then it does not support multiple execution instances.
+        </li>
+      </ul>
+      </p>
+    </section>
+
+    <section id="common-procedures">
+      <h2>Common Procedures</h2>
+      <p>
+      The common procedures provide the following services.
+      </p>
+      <ul>
+        <li>
+        Initiating a connection session to a vehicle.
+        </li>
+        <li>
+        Terminating the connection session to a vehicle.
+        </li>
+        <li>
+        Terminating an ongoing procedure execution.
+        </li>
+      </ul>
+      <section id="connect-procedure">
+        <h2>Connect</h2>
+        <p>Sets up a connectivity session with a vehicle.</p>
+
+        <p>
+        This procedure sets up a connection with the vehicle that is associated with the input vehicle globally unique identity.
+        This identity may be a pseudo-VIN that has been derived from the vehicle VIN.
+        How the client has obtained this identity is out-of-scope for this specification.
+        If it succeeds it will return a vehicle Id that shall be used as input in the procedures that require a vehicle Id.
+        </p>
+
+        <section id="connect-signature">
+          <h2>Signature</h2>
+          <pre><code>Connect(vehicleGuid: string, clientCredentials string, protocol string): ConnectOutput</code></pre>
+        </section>
+
+        <section id="connect-parameters">
+          <h2>Parameters</h2>
+          <ul class="param-list">
+            <li>
+              <strong><code>vehicleGuid</code></strong> (<span class="type">string</span>)
+              <br>
+              A globally unique reference to the vehicle.
+            </li>
+            <li>
+              <strong><code>clientCredentials</code></strong> (<span class="type">string</span>)
+              <br>
+              Access to the vehicle services or signals might require that a credential is present.
+              This parameter should then contain this credential. If it is not required then it shall be set to an empty string.
+            </li>
+            <li>
+              <strong><code>protocol</code></strong> (<span class="type">string</span>)
+              <br>
+              If the connectivity solution that is used by the VAPI implementation supports use of multiple transport
+              protocols then this parameter allows the client to select which to use.
+              An empty string leaves the selection to the implementation.
+              The names representing the supported protocols must align with the names used by the implemented connectivity solution.
+            </li>
+          </ul>
+        </section>
+
+        <section id="connect-returns">
+          <h2>Returns</h2>
+            <span class="type"><code>ConnectOutput</code></span>
+            <br>
+            A struct containing the output data from the Connect procedure.
+            <pre><code>
+            {
+              Status: ProcedureStatus,
+              Error: *ErrorData,
+              VehicleId: int32
+            }
+            </code></pre>
+            Struct member descriptions:<br>
+            <a href="#procedure-status">Status: </a>The status of the latest service call to it.<br>
+            <a href="#error-data">Error: </a>Error information for the latest service call, if error occurred.<br>
+            VehicleId: The reference to the vehicle that shall be used as input in procedures that require a vehicle id.
+            The scope of this Id is limited to run-time scope of the client calling Connect.
+            It should be a randomly generated value to prevent other clients to guess its value.
+        </section>
+
+        <section id="connect-error">
+          <h2>Error</h2>
+          <ul class="error-list">
+            <li>
+            If Status is set to FAILED then Error must be available and populated with error data, else the pointer to Error shall be set to nil.
+            </li>
+            <li>
+            Error data shall at least support the error cases:
+            <ul>
+              <li>
+              Unknown globally unique vehicle identity.
+              </li>
+              <li>
+              Vehicle connection data not available.
+              </li>
+              <li>
+              Connecting to vehicle failed.
+              </li>
+            </ul>
+            </li>
+            <li>
+             The VehicleId parameter is invalid if Status is set to FAILED.
+            </li>
+          </ul>
+        </section>
+      </section>
+
+      <section id="terminate-connection-procedure">
+        <h2>TerminateConnection</h2>
+      </section>
+
+      <section id="terminate-service-procedure">
+        <h2>TerminateService</h2>
+      </section>
+
+    </section>
+
+    <section id="signal-procedures">
+      <h2>Signal Procedures</h2>
+      <p>
+      xxx
+      </p>
+
+      <section id="get-procedure">
+        <h2>Get</h2>
+        <p>Get the value of one or more signals.</p>
+
+        <p>This procedure retrieves the latest available value with associated timestamp of the signal that is referenced by the input path.
+        It is possible to reference multiple signals in one call.<br>
+        This procedure supports multiple execution instances.
+        </p>
+
+        <section id="get-signature">
+          <h2>Signature</h2>
+          <pre><code>Get(vehicleId: uint32, path: string, filter: string): GetOutput</code></pre>
+        </section>
+
+        <section id="get-parameters">
+          <h2>Parameters</h2>
+          <ul class="param-list">
+            <li>
+              <strong><code>vehicleId</code></strong> (<span class="type">uint32</span>)
+              <br>
+              A reference to the vehicle that was obtained in a previous <a href="#connect-procedure">Connect()</a>.
+            </li>
+            <li>
+              <strong><code>path</code></strong> (<span class="type">string</span>)
+              <br>
+              The path must follow the syntax described in HIM. It must address a lef node in the HIM defined tree, unless there is also an input filter parameter.
+            </li>
+            <li>
+              <strong><code>filter</code></strong> (<span class="type">string</span>)
+              <br>
+              If the path addresses a branch node in the HIM defined tree, then a filter must be used to extend it to one or more leaf nodes.
+              The filter expression must follow the syntax as described in the implemented connectivity solution.
+            </li>
+          </ul>
+        </section>
+
+        <section id="get-returns">
+          <h2>Returns</h2>
+            <span class="type"><code>GetOutput</code></span>
+            <br>
+            A struct containing the output data from the Get procedure.
+            <pre><code>
+            {
+              Status: <a href="#procedure-status">ProcedureStatus</a>,
+              Error: *ErrorData,
+              Data: []DataContainer
+            }
+            </code></pre>
+            Struct member descriptions:<br>
+            <a href="#procedure-status">Status: </a>The status of the latest service call to it.<br>
+            <a href="#error-data">Error: </a>Error information for the latest service call, if error occurred.<br>
+            <a href="#data-container">Data: </a>The requested signal data. Invalid if error occurred.
+        </section>
+
+        <section id="get-error">
+          <h2>Error</h2>
+          <ul class="error-list">
+            <li>
+            If Status is set to FAILED then Error must be available and populated with error data, else the pointer to Error shall be set to nil.
+            </li>
+            <li>
+            Error data shall conform to the error data definitions in VISS for signals.
+            </li>
+            <li>
+             The Data parameter is invalid if Status is set to FAILED.
+            </li>
+          </ul>
+        </section>
+      </section>
+
+      <section id="set-procedure">
+        <h2>Set</h2>
+        <p>
+        xxx
+        </p>
+      </section>
+
+      <section id="subscribe-procedure">
+        <h2>Subscribe</h2>
+        <p>
+        xxxx
+        </p>
+      </section>
+
+      <section id="unsubscribe-procedure">
+        <h2>Unsubscribe</h2>
+        <p>
+        xxxx
+        </p>
+      </section>
+
+      <section id="getmetadata-procedure">
+        <h2>GetMetadata</h2>
+        <p>
+        xxxx
+        </p>
+      </section>
+
+    </section>
+
+  </section>
+
+  <section id="service-procedures">
+    <h2>Service Procedures</h2>
+    <p>
+    xxx
+    </p>
+
+    <section id="seating-service-group">
+      <h2>Seating Service Group</h2>
+      <p>
+      xxx
+      </p>
+
+    <section id="xxx-procedure">
+      <h2>xxx Procedure</h2>
+      <p>
+      xxx
+      </p>
+    </section>
+  </section>
+
+  <section id="hvac-service-group">
+    <h2>HVAC Service Group</h2>
+    <p>
+    xxx
+    </p>
+
+    <section id="xxx-procedure">
+      <h2>xxx Procedure</h2>
+      <p>
+      xxx
+      </p>
+    </section>
+  </section>
+
+  <section id="datatype-definitions">
+    <h2>Datatype Definitions</h2>
+    <p>
+    Datatypes that are used by multiple procedures are defined below.
+    </p>
+
+      <section id="error-data">
+        <h2>ErrorData</h2>
+        A struct containing the error data related to a failed procedure call.<br>
+        The Code shall conform to the status codes defined in [[RFC2616]].<br>
+        The Reason shall be the associated reason phrase from the referenced RFC document.<br>
+        The Description shall provide more context of the failure.
+        <pre><code>
+        {
+            Code: int32,
+            Reason: string,
+            Description: string
+        }
+        </code></pre>
+      </section>
+
+      <section id="data-container">
+        <h2>DataContainer</h2>
+        A struct containing the path of a signal and one or more data points for the signal.
+        <pre><code>
+        {
+            Path: string,
+            SignalData: []DataPoint
+        }
+        </code></pre>
+      </section>
+
+      <section id="data-point">
+        <h2>DataPoint</h2>
+        A struct containing one data point. A data point contains a signal value and its associated timestamp.
+        The value has string format which is used to represent the value for any of the datatypes supported by HIM.
+        <pre><code>
+        {
+            Value: string,
+            Timestamp: string
+        }
+        </code></pre>
+      </section>
+
+      <section id="procedure-status">
+        <h2>ProcedureStatus</h2>
+        An enumeration of int8 values representing the current state of a procedure execution. If set to FAILED then associated ErrorData is available.
+        <pre><code>
+        enum: [
+            ONGOING = 1,     // in execution of latest call
+            SUCCESSFUL = 0,  // terminated successfully in latest call
+            FAILED = -1      // terminated due to failure in latest call
+        ]
+        </code></pre>
+      </section>
+    </section>   
+  </body>
+</html>
