@@ -17,7 +17,7 @@
         edDraftURI: "https://github.com/UlfBj/vehicle-api/tree/main/spec/VAPIv1.0.html",
         shortName: "vapi1.0",
         localBiblio: {
-          "VISSv3.0": {
+          "VISS": {
             title: "COVESA VISS version 3.0",
             href: "https://raw.githack.com/COVESA/vehicle-information-service-specification/releases/tag/v3.0",
             publisher: "Ulf Bjorkengren; Wonsuk Lee"
@@ -209,18 +209,21 @@
           <h2>Parameters</h2>
           <ul class="param-list">
             <li>
-              <strong><code>vehicleGuid</code></strong> (<span class="type">string</span>)
+              <strong>vehicleGuid</strong> (<span class="type">string</span>)
               <br>
               A globally unique reference to the vehicle.
             </li>
             <li>
-              <strong><code>clientCredentials</code></strong> (<span class="type">string</span>)
+              <strong>clientCredentials</strong> (<span class="type">string</span>)
               <br>
-              Access to the vehicle services or signals might require that a credential is present.
-              This parameter should then contain this credential. If it is not required then it shall be set to an empty string.
+              Access to the vehicle services or signals might require that a credential is present, e .g. a certificate.
+              How the client obtains this credential is out-of-scope for this specification,
+              as well as what is required of it to become verified successfully.
+              This information may be available in the context of the implemented connectivity solution.
+              If it is not required then it shall be set to an empty string.
             </li>
             <li>
-              <strong><code>protocol</code></strong> (<span class="type">string</span>)
+              <strong>protocol</strong> (<span class="type">string</span>)
               <br>
               If the connectivity solution that is used by the VAPI implementation supports use of multiple transport
               protocols then this parameter allows the client to select which to use.
@@ -240,6 +243,7 @@
               Status: ProcedureStatus,
               Error: *ErrorData,
               VehicleId: int32
+              LtCredentials: string
             }
             </code></pre>
             Struct member descriptions:<br>
@@ -247,7 +251,9 @@
             <a href="#error-data">Error: </a>Error information for the latest service call, if error occurred.<br>
             VehicleId: The reference to the vehicle that shall be used as input in procedures that require a vehicle id.
             The scope of this Id is limited to run-time scope of the client calling Connect.
-            It should be a randomly generated value to prevent other clients to guess its value.
+            It should be a randomly generated value to prevent other clients to guess its value.<br>
+            LtCredentials: Long term credentials that may have a lifetime equal to the vehicle connectivity session.
+            If not used then it shall be set to an empty string.
         </section>
 
         <section id="connect-error">
@@ -271,7 +277,7 @@
             </ul>
             </li>
             <li>
-             The VehicleId parameter is invalid if Status is set to FAILED.
+             The VehicleId and LtCredentials parameters are invalid if Status is set to FAILED.
             </li>
           </ul>
         </section>
@@ -283,6 +289,90 @@
 
       <section id="terminate-service-procedure">
         <h2>TerminateService</h2>
+      </section>
+
+      <section id="get-st-credentials-procedure">
+        <h2>GetStCredentials</h2>
+        <p>Get the vehicle short term credentials.</p>
+
+        <p>
+        This procedure is used by the client to obtain the short term credentials that can be used to access vehicle signals/services for a specific
+        use case / purpose.
+        </p>
+
+        <section id="get-st-credentials-signature">
+          <h2>Signature</h2>
+          <pre><code>GetStCredentials(vehicleId: uint32, ltCredentials string, purpose string): GetStCredentialsOutput</code></pre>
+        </section>
+
+        <section id="get-st-credentials-parameters">
+          <h2>Parameters</h2>
+          <ul class="param-list">
+            <li>
+              <strong>vehicleId</strong> (<span class="type">uint32</span>)
+              <br>
+              A reference to the vehicle that was obtained in a previous <a href="#connect-procedure">Connect()</a>.
+            </li>
+            <li>
+              <strong>ltCredentials</strong> (<span class="type">string</span>)
+              <br>
+              The long term credentials that was obtained in a previous <a href="#connect-procedure">Connect()</a>.
+              If it is not required then it shall be set to an empty string.
+            </li>
+            <li>
+              <strong>purpose</strong> (<span class="type">string</span>)
+              <br>
+              A description of the use case / purpose for the client access to the signals/service.
+              If not required it shall be set to an empty string.
+              The string representing the purpose must align with the purposes supported by the ecosystem around the implemented connectivity solution.
+            </li>
+          </ul>
+        </section>
+
+        <section id="get-st-credentials-returns">
+          <h2>Returns</h2>
+            <span class="type"><code>GetStCredentialsOutput</code></span>
+            <br>
+            A struct containing the output data from the GetStCredentials procedure.
+            <pre><code>
+            {
+              Status: ProcedureStatus,
+              Error: *ErrorData,
+              StCredentials: string
+            }
+            </code></pre>
+            Struct member descriptions:<br>
+            <a href="#procedure-status">Status: </a>The status of the latest service call to it.<br>
+            <a href="#error-data">Error: </a>Error information for the latest service call, if error occurred.<br>
+            StCredentials: Short term credentials that have a lifetime  less than or equal to the vehicle connectivity session.
+            If not required for the client to get access then it shall be set to an empty string.
+        </section>
+
+        <section id="get-st-credentials-error">
+          <h2>Error</h2>
+          <ul class="error-list">
+            <li>
+            If Status is set to FAILED then Error must be available and populated with error data, else the pointer to Error shall be set to nil.
+            </li>
+            <li>
+            Error data shall at least support the error cases:
+            <ul>
+              <li>
+              Unknown globally unique vehicle identity.
+              </li>
+              <li>
+              Vehicle connection data not available.
+              </li>
+              <li>
+              Connecting to vehicle failed.
+              </li>
+            </ul>
+            </li>
+            <li>
+             The StCredentials parameter is invalid if Status is set to FAILED.
+            </li>
+          </ul>
+        </section>
       </section>
 
     </section>
@@ -304,27 +394,32 @@
 
         <section id="get-signature">
           <h2>Signature</h2>
-          <pre><code>Get(vehicleId: uint32, path: string, filter: string): GetOutput</code></pre>
+          <pre><code>Get(vehicleId: uint32, path: string, filter: string, stCredentials string): GetOutput</code></pre>
         </section>
 
         <section id="get-parameters">
           <h2>Parameters</h2>
           <ul class="param-list">
             <li>
-              <strong><code>vehicleId</code></strong> (<span class="type">uint32</span>)
+              <strong>vehicleId</strong> (<span class="type">uint32</span>)
               <br>
               A reference to the vehicle that was obtained in a previous <a href="#connect-procedure">Connect()</a>.
             </li>
             <li>
-              <strong><code>path</code></strong> (<span class="type">string</span>)
+              <strong>path</strong> (<span class="type">string</span>)
               <br>
               The path must follow the syntax described in HIM. It must address a lef node in the HIM defined tree, unless there is also an input filter parameter.
             </li>
             <li>
-              <strong><code>filter</code></strong> (<span class="type">string</span>)
+              <strong>filter</strong> (<span class="type">string</span>)
               <br>
               If the path addresses a branch node in the HIM defined tree, then a filter must be used to extend it to one or more leaf nodes.
               The filter expression must follow the syntax as described in the implemented connectivity solution.
+            </li>
+            <li>
+              <strong>stCredentials</strong> (<span class="type">string</span>)
+              <br>
+              The short term credentials that was obtained by a call to <a href="#get-st-credentials-procedure">GetStCredentials()</a>.
             </li>
           </ul>
         </section>
@@ -336,7 +431,7 @@
             A struct containing the output data from the Get procedure.
             <pre><code>
             {
-              Status: <a href="#procedure-status">ProcedureStatus</a>,
+              Status: ProcedureStatus,
               Error: *ErrorData,
               Data: []DataContainer
             }
@@ -344,7 +439,7 @@
             Struct member descriptions:<br>
             <a href="#procedure-status">Status: </a>The status of the latest service call to it.<br>
             <a href="#error-data">Error: </a>Error information for the latest service call, if error occurred.<br>
-            <a href="#data-container">Data: </a>The requested signal data. Invalid if error occurred.
+            <a href="#data-container">Data: </a>The requested signal data.
         </section>
 
         <section id="get-error">
@@ -354,7 +449,7 @@
             If Status is set to FAILED then Error must be available and populated with error data, else the pointer to Error shall be set to nil.
             </li>
             <li>
-            Error data shall conform to the error data definitions in VISS for signals.
+            Error data shall conform to the error data definitions in [[VISS]] for signals.
             </li>
             <li>
              The Data parameter is invalid if Status is set to FAILED.
@@ -372,9 +467,86 @@
 
       <section id="subscribe-procedure">
         <h2>Subscribe</h2>
+        <p>Subscribe to receiving event messages containing one or more signals.</p>
+
         <p>
-        xxxx
+        Subscribe initiates a session in which the values of one or more signals are asynchronously returned depending on the event trigger condition.
+        It is possible to reference multiple signals in one call.
         </p>
+
+        <section id="subscribe-signature">
+          <h2>Signature</h2>
+          <pre><code>Subscribe(vehicleId: uint32, path: string, filter: string, stCredentials string, callback *fcn(SubscribeOutput): SubscribeOutput</code></pre>
+        </section>
+
+        <section id="subscribe-parameters">
+          <h2>Parameters</h2>
+          <ul class="param-list">
+            <li>
+              <strong>vehicleId</strong> (<span class="type">uint32</span>)
+              <br>
+              A reference to the vehicle that was obtained in a previous <a href="#connect-procedure">Connect()</a>.
+            </li>
+            <li>
+              <strong>path</strong> (<span class="type">string</span>)
+              <br>
+              The path must follow the syntax described in HIM. It must address a lef node in the HIM defined tree, unless there is also an input filter parameter.
+            </li>
+            <li>
+              <strong>filter</strong> (<span class="type">string</span>)
+              <br>
+              If the path addresses a branch node in the HIM defined tree, then a filter must be used to extend it to one or more leaf nodes.
+              The filter expression must follow the syntax as described in [[VISS]].
+            </li>
+            <li>
+              <strong>stCredentials</strong> (<span class="type">string</span>)
+              <br>
+              The short term credentials that was obtained by a call to <a href="#get-st-credentials-procedure">GetStCredentials()</a>.
+            </li>
+            <li>
+              <strong>callback</strong> (<span class="type">*fcn(SubscribeOutput)</span>)
+              <br>
+              A pointer to a callback function that is called when an event message gets issued by the server.
+            </li>
+          </ul>
+        </section>
+
+        <section id="subscribe-returns">
+          <h2>Returns</h2>
+            <span class="type"><code>SubscribeOutput</code></span>
+            <br>
+            A struct containing the output data from the Subscribe procedure.
+            This shall be returned both synchronously on the proedure call and asynchronously on event trigger conditions.
+            <pre><code>
+            {
+              Status: ProcedureStatus,
+              Error: *ErrorData,
+              Data: []DataContainer
+              SessionHandle: int32
+            }
+            </code></pre>
+            Struct member descriptions:<br>
+            <a href="#procedure-status">Status: </a>The status of the latest service call to it.<br>
+            <a href="#error-data">Error: </a>Error information for the latest service call, if error occurred.<br>
+            <a href="#data-container">Data: </a>The requested signal data.<br>
+            SessionHandle: A reference to the subscription session that the client may use to call <a href="#terminate-service-procedure">TerminateService()</a>.
+        </section>
+
+        <section id="subscribe-error">
+          <h2>Error</h2>
+          <ul class="error-list">
+            <li>
+            If Status is set to FAILED then Error must be available and populated with error data, else the pointer to Error shall be set to nil.
+            </li>
+            <li>
+            Error data shall conform to the error data definitions in [[VISS]] for signals.
+            </li>
+            <li>
+             The Data and SessionHandle parameters are invalid if Status is set to FAILED.
+            </li>
+          </ul>
+        </section>
+      </section>
       </section>
 
       <section id="unsubscribe-procedure">
@@ -398,14 +570,283 @@
   <section id="service-procedures">
     <h2>Service Procedures</h2>
     <p>
-    xxx
+    The vehicle services are structured into service groups where each group contains services that relates to a vehicle domain.
+    The service groups supported by VAPI are listed below.
+    <ul>
+      <li>
+      <strong><a href="#seating-service-group">Seating</a></strong>
+      </li>
+      <li>
+      <strong><a href="#hvac-service-group">HVAC</a></strong>
+      </li>
+      <li>
+      <strong><a href="#exterior-lightning-service-group">Exterior Lightning</a></strong>
+      </li>
+      <li>
+      <strong><a href="#interior-lightning-service-group">Interior Lightning</a></strong>
+      </li>
+    </ul>
     </p>
 
     <section id="seating-service-group">
       <h2>Seating Service Group</h2>
       <p>
-      xxx
+      The seating service group consists of all services related to the vehicle seating.
       </p>
+
+    <section id="get-properties-seatid-procedure">
+      <h2>GetPropertiesSeatId</h2>
+        <p>Get the available seat Ids in the vehicle.</p>
+
+        <p>This procedure retrieves the latest available value with associated timestamp of the signal that is referenced by the input path.
+        It is possible to reference multiple signals in one call.<br>
+        This procedure supports multiple execution instances.
+        </p>
+
+        <section id="get-properties-seatid-signature">
+          <h2>Signature</h2>
+          <pre><code>GetPropertiesSeatId(vehicleId: uint32): GetPropertiesSeatIdOutput</code></pre>
+        </section>
+
+        <section id="get-properties-seatid-parameters">
+          <h2>Parameters</h2>
+          <ul class="param-list">
+            <li>
+              <strong>vehicleId</strong> (<span class="type">uint32</span>)
+              <br>
+              A reference to the vehicle that was obtained in a previous <a href="#connect-procedure">Connect()</a>.
+            </li>
+          </ul>
+        </section>
+
+        <section id="get-properties-seatid-returns">
+          <h2>Returns</h2>
+            <span class="type"><code>GetPropertiesSeatIdOutput</code></span>
+            <br>
+            A struct containing the output data from the GetPropertiesSeatId procedure.
+            <pre><code>
+            {
+              Status: ProcedureStatus,
+              Error: *ErrorData,
+              SeatIds: RaggedMatrix
+            }
+            </code></pre>
+            Struct member descriptions:<br>
+            <a href="#procedure-status">Status: </a>The status of the latest service call to it.<br>
+            <a href="#error-data">Error: </a>Error information for the latest service call, if error occurred.<br>
+            <a href="#ragged-matrix">SeatIds: </a>A ragged matrix of seat identities.
+        </section>
+
+        <section id="get-properties-seatid-error">
+          <h2>Error</h2>
+          <ul class="error-list">
+            <li>
+            If Status is set to FAILED then Error must be available and populated with error data, else the pointer to Error shall be set to nil.
+            </li>
+            <li>
+            Error data shall conform to the error data definitions in [[VISS]] for signals.
+            </li>
+            <li>
+             The SeatIds parameter is invalid if Status is set to FAILED.
+            </li>
+          </ul>
+        </section>
+    </section>
+
+    <section id="get-properties-seatmovement-procedure">
+      <h2>GetPropertiesSeatMovement</h2>
+        <p>Get the supported seat movement types in the vehicle.</p>
+
+        <p>
+        This procedure retrieves the supported set of movement types in the vehicle.
+        The following non-exhaustive list of names should be used for the supported movement types:
+          <ul>
+            <li>
+              <strong>longitudal:</strong>
+              Seat movement in the direction parallel to the driving direction.
+              Forward/backward movements with max backwards being zero percentage.
+            </li>
+            <li>
+              <strong>lateral:</strong>
+              Seat movement in the direction anti-parallel to the driving direction, in the horizontal plane.
+              Left/right movements with max left being zero percentage.
+            </li>
+            <li>
+              <strong>vertical:</strong>
+              Seat movement in the vertical direction to the driving plane.
+              Up/down movements with max down being zero percentage.
+            </li>
+            <li>
+              <strong>tilt:</strong>
+              Angular seat movement of the backrest relative the driving plane.
+              Tilt/recline movements with max recline being zero percentage.
+            </li>
+            <li>
+              <strong>lumbar:</strong>
+              Seat movement of the lumber support.
+              Inflate/deflate movements with max deflate being zero percentage.
+            </li>
+            <li>
+              <strong>headrest-vertical:</strong>
+              Seat headrest movement the vertical direction to the driving plane.
+              Up/down movements with max down being zero percentage.
+            </li>
+            <li>
+              <strong>headrest-tilt:</strong>
+              Angular movement of the seat headrest relative to the driving plane.
+              Tilt/recline movements with max recline being zero percentage.
+            </li>
+          </ul>
+          Movement types not covered by the list may be added in an implementation.
+        </p>
+
+        <section id="get-properties-seatid-signature">
+          <h2>Signature</h2>
+          <pre><code>GetPropertiesSeatMovement(vehicleId: uint32): GetPropertiesSeatMovementOutput</code></pre>
+        </section>
+
+        <section id="get-properties-seatid-parameters">
+          <h2>Parameters</h2>
+          <ul class="param-list">
+            <li>
+              <strong>vehicleId</strong> (<span class="type">uint32</span>)
+              <br>
+              A reference to the vehicle that was obtained in a previous <a href="#connect-procedure">Connect()</a>.
+            </li>
+          </ul>
+        </section>
+
+        <section id="get-properties-seatid-returns">
+          <h2>Returns</h2>
+            <span class="type"><code>GetPropertiesSeatMovementOutput</code></span>
+            <br>
+            A struct containing the output data from the GetPropertiesSeatMovement procedure.
+            <pre><code>
+            {
+              Status: ProcedureStatus,
+              Error: *ErrorData,
+              SeatMovements: []SeatMovementType
+            }
+            </code></pre>
+            Struct member descriptions:<br>
+            <a href="#procedure-status">Status: </a>The status of the latest service call to it.<br>
+            <a href="#error-data">Error: </a>Error information for the latest service call, if error occurred.<br>
+            <a href="#seatmovement-type">SeatMovements: </a>
+            A struct array containing names and descriptions of the different seat movement types supported by the vehicle.
+        </section>
+
+        <section id="get-properties-seatid-error">
+          <h2>Error</h2>
+          <ul class="error-list">
+            <li>
+            If Status is set to FAILED then Error must be available and populated with error data, else the pointer to Error shall be set to nil.
+            </li>
+            <li>
+            Error data shall conform to the error data definitions in [[VISS]] for signals.
+            </li>
+            <li>
+             The SeatMovements parameter is invalid if Status is set to FAILED.
+            </li>
+          </ul>
+        </section>
+    </section>
+
+    <section id="move-seat-procedure">
+      <h2>MoveSeat</h2>
+        <p>Performs all possible seat movements.</p>
+
+        <p>
+        This procedure performs all possible types of seat movements.
+        It supports "synchronous" movement to any position provided as input to the service, 
+        and also "asynchronous" movement where the client terminates the service execution by invokation of <a href="#terminate-service-procedure">TerminateService()</a>.
+        In the asynchronous scenario the provided input to the service is typically one of the position range end points (zero or hundred percent).
+        </p>
+
+        <section id="move-seat-signature">
+          <h2>Signature</h2>
+          <pre><code>MoveSeat(vehicleId: uint32, seatId MatrixId, movementType: SeatMovements, position: Percentage,
+          stCredentials string, callback *fcn(MoveSeatOutput): MoveSeatOutput</code></pre>
+        </section>
+
+        <section id="move-seat-parameters">
+          <h2>Parameters</h2>
+          <ul class="param-list">
+            <li>
+              <strong>vehicleId</strong> (<span class="type">uint32</span>)
+              <br>
+              A reference to the vehicle that was obtained in a previous <a href="#connect-procedure">Connect()</a>.
+            </li>
+            <li>
+              <strong>seatId</strong> (<span class="type"><a href="#matrix-id">MatrixId</a></span>)
+              <br>
+              The seat Id identifies one of the seats in the vehicle.
+            </li>
+            <li>
+              <strong>movementType</strong> (<span class="type">string</span>)
+              <br>
+              The seat movement type must be one of the SeatMovements elements retrieved by <a href="#get-properties-seatmovement-procedure">GetPropertiesSeatMovement()</a>.
+            </li>
+            <li>
+              <strong>position</strong> (<span class="type"><a href="#percentage">Percentage()</a></span>)
+              <br>
+              The seat movement regardless of type is expressed in a percentage where zero (0) is one end position and hundred (100) is the other end position.
+            </li>
+            <li>
+              <strong>stCredentials</strong> (<span class="type">string</span>)
+              <br>
+              The short term credentials that was obtained by a call to <a href="#get-st-credentials-procedure">GetStCredentials()</a>.
+            </li>
+            <li>
+              <strong>callback</strong> (<span class="type">*fcn(SubscribeOutput)</span>)
+              <br>
+              A pointer to a callback function that is called when an event message gets issued by the server.
+            </li>
+          </ul>
+        </section>
+
+        <section id="move-seat-returns">
+          <h2>Returns</h2>
+            <span class="type"><code>SubscribeOutput</code></span>
+            <br>
+            A struct containing the output data from the Subscribe procedure.
+            This shall be returned both synchronously on the proedure call and asynchronously on event trigger conditions.
+            <pre><code>
+            {
+              Status: ProcedureStatus,
+              Error: *ErrorData,
+              Data: []DataContainer
+              SessionHandle: int32
+            }
+            </code></pre>
+            Struct member descriptions:<br>
+            <a href="#procedure-status">Status: </a>The status of the latest service call to it.<br>
+            <a href="#error-data">Error: </a>Error information for the latest service call, if error occurred.<br>
+            <a href="#data-container">Data: </a>The requested signal data.<br>
+            SessionHandle: A reference to the subscription session that the client may use to call <a href="#terminate-service-procedure">TerminateService()</a>.
+        </section>
+
+        <section id="move-seat-error">
+          <h2>Error</h2>
+          <ul class="error-list">
+            <li>
+            If Status is set to FAILED then Error must be available and populated with error data, else the pointer to Error shall be set to nil.
+            </li>
+            <li>
+            Error data shall conform to the error data definitions in [[VISS]] for signals.
+            </li>
+            <li>
+             The Data and SessionHandle parameters are invalid if Status is set to FAILED.
+            </li>
+          </ul>
+        </section>
+    </section>
+  </section>
+
+  <section id="hvac-service-group">
+    <h2>HVAC Service Group</h2>
+    <p>
+      The HVAC service group consists of all services related to the vehicle HVAC functionality.
+    </p>
 
     <section id="xxx-procedure">
       <h2>xxx Procedure</h2>
@@ -415,10 +856,24 @@
     </section>
   </section>
 
-  <section id="hvac-service-group">
-    <h2>HVAC Service Group</h2>
+  <section id="exterior-lightning-service-group">
+    <h2>Exterior Lightning Service Group</h2>
     <p>
-    xxx
+      The Exterior Lightning service group consists of all services related to the vehicle exterior lightning.
+    </p>
+
+    <section id="xxx-procedure">
+      <h2>xxx Procedure</h2>
+      <p>
+      xxx
+      </p>
+    </section>
+  </section>
+
+  <section id="interior-lightning-service-group">
+    <h2>Interior Lightning Service Group</h2>
+    <p>
+      The Interior Lightning service group consists of all services related to the vehicle interior lightning.
     </p>
 
     <section id="xxx-procedure">
@@ -484,6 +939,57 @@
         ]
         </code></pre>
       </section>
-    </section>   
+ 
+      <section id="percentage">
+        <h2>Percentage</h2>
+        An integer value ranging from zero to one hundred.
+        This represents the percentage of the current value within a range calculated as current value / (max range value - min range value).
+        The semantics of max and min range values shall be defined in the context of the range being addressed.
+        <pre><code>
+        uint8
+        min = 0
+        max = 100
+        </code></pre>
+      </section>
+
+      <section id="matrix-id">
+        <h2>MatrixId</h2>
+        A struct containing the Id of one element of a two-dimensional matrix.
+        <pre><code>
+        {
+            RowName: string,
+            ColumnName: string
+        }
+        </code></pre>
+      </section>
+
+      <section id="ragged-matrix">
+        <h2>RaggedMatrix</h2>
+        A two-dimensional matrix in which the number of elements may vary in the different rows.
+        The matrix is represented as an array of RowDef elements.
+        The Rowdef datatype is a struct with one element representing the name of the row,
+        and the other is a string representing a JSON string array containing the elements of that row.
+        <pre><code>
+        RowDef: struct {
+        {
+            RowName: string,
+            ColumnNames: string
+        }
+        RaggedMatrix: []Rowdef
+        </code></pre>
+      </section>
+
+      <section id="seatmovement-type">
+        <h2>SeatMovementType</h2>
+        A struct containing the name and description of aa seat movement type.
+        <pre><code>
+        {
+            Name: string,
+            Description: string
+        }
+        </code></pre>
+      </section>
+
+    </section>
   </body>
 </html>
