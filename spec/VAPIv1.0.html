@@ -127,7 +127,7 @@
         VAPI procedures are characterized as belonging to one of the types Common, Signal, or Service.
       <ul>
           <li>
-            The Common type contains all procedures that are not invoked to a specific vehicle, which the other two groups are.
+            The Common type contains the procedures that common to both signal and service access.
           </li>
           <li>
             The Signal type contains the procedures that a client may use for access to vehicle signals.
@@ -143,9 +143,9 @@
         </li>
         <li>
         Procedures representing services with an extended execution time shall include a pointer to a callback procedure as input parameter.
-        The procedure must invoke the callback procedure at the successful termination of the service, or if the service terminates unsuccessfully.
-        It may issue multiple invokations during the execution.
-        A client that does not want to receive callback may set the input callback pointer to nil.
+        The procedure implementation must invoke the callback procedure at the successful termination of the service, or if the service terminates unsuccessfully.
+        It may issue further callback invokations during the execution.
+        A client that does not want to receive callbacks shall set the input callback pointer to nil.
         </li>
         <li>
         The output data that is defined in the procedure signature must contain a ProcedureStatus parameter and an ErrorData parameter.<br>
@@ -167,7 +167,7 @@
         Procedures that do not support multiple execution instances must set the Status to ONGOING in the output if it is called
         during execution of a previous call.<br>
         It shall be stated in the procedure documentation if it supports multiple execution instances.
-        If not stated then it does not support multiple execution instances.
+        If not stated then it shall not support multiple execution instances.
         </li>
       </ul>
       </p>
@@ -180,13 +180,19 @@
       </p>
       <ul>
         <li>
-        Initiating a connection session to a vehicle.
+        <a href="#connect-procedure">Initiate a connection session to a vehicle</a>.
         </li>
         <li>
-        Terminating the connection session to a vehicle.
+        <a href="#terminate-connection-procedure">Terminate the connection session to a vehicle</a>.
         </li>
         <li>
-        Terminating an ongoing procedure execution.
+        <a href="#terminate-service-procedure">Terminate an ongoing procedure execution</a>.
+        </li>
+        <li>
+        <a href="#get-st-credentials-procedure">Request for short term credentials</a>.
+        </li>
+        <li>
+        <a href="#invoke-procedure">Invoke a service that is not part of the VAPI specification</a>.
         </li>
       </ul>
       <section id="connect-procedure">
@@ -375,6 +381,176 @@
         </section>
       </section>
 
+      <section id="invoke-procedure">
+        <h2>Invoke</h2>
+        <p>The Invoke procedure enables procedures that are not part of the VAPI specification to be invoked.</p>
+
+        <p>
+        The Invoke procedure takes a procedure name and its input parameters as input.
+        </p>
+
+        <section id="Invoke-signature">
+          <h2>Signature</h2>
+          <pre><code>Invoke(vehicleId: uint32, procedureName: string, procedureInput: string, stCredentials string, callback *fcn(InvokeOutput): InvokeOutput</code></pre>
+        </section>
+
+        <section id="Invoke-parameters">
+          <h2>Parameters</h2>
+          <ul class="param-list">
+            <li>
+              <strong>vehicleId</strong> (<span class="type">uint32</span>)
+              <br>
+              A reference to the vehicle that was obtained in a previous <a href="#connect-procedure">Connect()</a>.
+            </li>
+            <li>
+              <strong>procedureName</strong> (<span class="type">string</span>)
+              <br>
+              If a procedure that is not part of the VAPI specification has been installed in the vehicle then information about it shall be
+              accessible for the client by invokation of the <a href="#getmetadata-procedure">GetMetadata()</a> procedure.
+            </li>
+            <li>
+              <strong>procedureInput</strong> (<span class="type">string</span>)
+              <br>
+              The input parameters of the procedure to be called are supplied as a JSON object.
+              The syntax shall be as follows (with two input parameters in the example).
+              <code>
+              {
+                  "parameterName1": "value1",
+                  "parameterName2": "value2"
+              }          
+              </code>
+              An empty string reprsents the case with no input parameters.
+            </li>
+            <li>
+              <strong>stCredentials</strong> (<span class="type">string</span>)
+              <br>
+              The short term credentials that was obtained by a call to <a href="#get-st-credentials-procedure">GetStCredentials()</a>.
+            </li>
+            <li>
+              <strong>callback</strong> (<span class="type">*fcn(InvokeOutput)</span>)
+              <br>
+              A pointer to a callback function that is called when an event message gets issued by the server.
+            </li>
+          </ul>
+        </section>
+
+        <section id="Invoke-returns">
+          <h2>Returns</h2>
+            <span class="type"><code>InvokeOutput</code></span>
+            <br>
+            A struct containing the output data from the Invoke procedure.
+            This shall be returned both synchronously on the procedure call and asynchronously on event trigger conditions.
+            <pre><code>
+            {
+              Status: ProcedureStatus,
+              Error: *ErrorData,
+              InvokeOutputParams: string
+              SessionHandle: int32
+            }
+            </code></pre>
+            Struct member descriptions:<br>
+            <a href="#procedure-status">Status: </a>The status of the latest service call to it.<br>
+            <a href="#error-data">Error: </a>Error information for the latest service call, if error occurred.<br>
+            InvokeOutputParams: The output parameters shall be a JSON object following the same syntax as used for the input parameters.<br>
+            SessionHandle: A reference to the subscription session that the client may use to call <a href="#terminate-service-procedure">TerminateService()</a>
+            It may be set to zero in which case it is invalid.
+        </section>
+
+        <section id="Invoke-error">
+          <h2>Error</h2>
+          <ul class="error-list">
+            <li>
+            If Status is set to FAILED then Error must be available and populated with error data, else the pointer to Error shall be set to nil.
+            </li>
+            <li>
+            Error data shall conform to the error data definitions in [[VISS]] for signals.
+            </li>
+            <li>
+             The InvokeOutputParams and SessionHandle parameters are invalid if Status is set to FAILED.
+            </li>
+          </ul>
+        </section>
+      </section>
+
+      <section id="getmetadata-procedure">
+        <h2>GetMetadata</h2>
+        <p>GetMetadata is used to get the metadata that defines a signal or service.</p>
+
+        <p>
+        GetMetadata retrieves the metadata from the subtree with the root node that the input path points to.
+        The subtree can contain either signal metadata or service metadata.
+        </p>
+
+        <section id="getmetadata-signature">
+          <h2>Signature</h2>
+          <pre><code>GetMetadata(vehicleId: uint32, path: string, stCredentials string, callback *fcn(GetMetadataOutput): GetMetadataOutput</code></pre>
+        </section>
+
+        <section id="getmetadata-parameters">
+          <h2>Parameters</h2>
+          <ul class="param-list">
+            <li>
+              <strong>vehicleId</strong> (<span class="type">uint32</span>)
+              <br>
+              A reference to the vehicle that was obtained in a previous <a href="#connect-procedure">Connect()</a>.
+            </li>
+            <li>
+              <strong>path</strong> (<span class="type">string</span>)
+              <br>
+              The path must follow the syntax described in HIM. It may address any node in the HIM defined tree.
+            </li>
+            <li>
+              <strong>stCredentials</strong> (<span class="type">string</span>)
+              <br>
+              The short term credentials that was obtained by a call to <a href="#get-st-credentials-procedure">GetStCredentials()</a>.
+            </li>
+            <li>
+              <strong>callback</strong> (<span class="type">*fcn(getmetadataOutput)</span>)
+              <br>
+              A pointer to a callback function that is called when an event message gets issued by the server.
+            </li>
+          </ul>
+        </section>
+
+        <section id="getmetadata-returns">
+          <h2>Returns</h2>
+            <span class="type"><code>GetMetadataOutput</code></span>
+            <br>
+            A struct containing the output data from the GetMetadata procedure.
+            This shall be returned both synchronously on the procedure  call and asynchronously on event trigger conditions.
+            <pre><code>
+            {
+              Status: ProcedureStatus,
+              Error: *ErrorData,
+              Metadata: string
+              SessionHandle: int32
+            }
+            </code></pre>
+            Struct member descriptions:<br>
+            <a href="#procedure-status">Status: </a>The status of the latest service call to it.<br>
+            <a href="#error-data">Error: </a>Error information for the latest service call, if error occurred.<br>
+            Metadata: A JSON object containing the metadata from the signals or services in the subtree.<br>
+            SessionHandle: A reference to the subscription session that the client may use to call <a href="#terminate-service-procedure">TerminateService()</a>.
+            It may be set to zero in which case it is invalid.
+        </section>
+
+        <section id="getmetadata-error">
+          <h2>Error</h2>
+          <ul class="error-list">
+            <li>
+            If Status is set to FAILED then Error must be available and populated with error data, else the pointer to Error shall be set to nil.
+            </li>
+            <li>
+            Error data shall conform to the error data definitions in [[VISS]] for signals.
+            </li>
+            <li>
+             The Metadata and SessionHandle parameters are invalid if Status is set to FAILED.
+            </li>
+          </ul>
+        </section>
+
+      </section>
+
     </section>
 
     <section id="signal-procedures">
@@ -408,7 +584,7 @@
             <li>
               <strong>path</strong> (<span class="type">string</span>)
               <br>
-              The path must follow the syntax described in HIM. It must address a lef node in the HIM defined tree, unless there is also an input filter parameter.
+              The path must follow the syntax described in HIM. It must address a leaf node in the HIM defined tree, unless there is also an input filter parameter.
             </li>
             <li>
               <strong>filter</strong> (<span class="type">string</span>)
@@ -490,7 +666,7 @@
             <li>
               <strong>path</strong> (<span class="type">string</span>)
               <br>
-              The path must follow the syntax described in HIM. It must address a lef node in the HIM defined tree, unless there is also an input filter parameter.
+              The path must follow the syntax described in HIM. It must address a leaf node in the HIM defined tree, unless there is also an input filter parameter.
             </li>
             <li>
               <strong>filter</strong> (<span class="type">string</span>)
@@ -516,7 +692,7 @@
             <span class="type"><code>SubscribeOutput</code></span>
             <br>
             A struct containing the output data from the Subscribe procedure.
-            This shall be returned both synchronously on the proedure call and asynchronously on event trigger conditions.
+            This shall be returned both synchronously on the procedure  call and asynchronously on event trigger conditions.
             <pre><code>
             {
               Status: ProcedureStatus,
@@ -530,6 +706,8 @@
             <a href="#error-data">Error: </a>Error information for the latest service call, if error occurred.<br>
             <a href="#data-container">Data: </a>The requested signal data.<br>
             SessionHandle: A reference to the subscription session that the client may use to call <a href="#terminate-service-procedure">TerminateService()</a>.
+            It may be set to zero in which case it is invalid.
+
         </section>
 
         <section id="subscribe-error">
@@ -547,7 +725,6 @@
           </ul>
         </section>
       </section>
-      </section>
 
       <section id="unsubscribe-procedure">
         <h2>Unsubscribe</h2>
@@ -555,16 +732,8 @@
         xxxx
         </p>
       </section>
-
-      <section id="getmetadata-procedure">
-        <h2>GetMetadata</h2>
-        <p>
-        xxxx
-        </p>
-      </section>
-
     </section>
-
+    </section>
   </section>
 
   <section id="service-procedures">
@@ -809,7 +978,7 @@
             <span class="type"><code>SubscribeOutput</code></span>
             <br>
             A struct containing the output data from the Subscribe procedure.
-            This shall be returned both synchronously on the proedure call and asynchronously on event trigger conditions.
+            This shall be returned both synchronously on the procedure  call and asynchronously on event trigger conditions.
             <pre><code>
             {
               Status: ProcedureStatus,
@@ -823,6 +992,7 @@
             <a href="#error-data">Error: </a>Error information for the latest service call, if error occurred.<br>
             <a href="#data-container">Data: </a>The requested signal data.<br>
             SessionHandle: A reference to the subscription session that the client may use to call <a href="#terminate-service-procedure">TerminateService()</a>.
+            It may be set to zero in which case it is invalid.
         </section>
 
         <section id="move-seat-error">
@@ -883,6 +1053,7 @@
       </p>
     </section>
   </section>
+  </section>
 
   <section id="datatype-definitions">
     <h2>Datatype Definitions</h2>
@@ -897,7 +1068,7 @@
         The Reason shall be the associated reason phrase from the referenced RFC document.<br>
         The Description shall provide more context of the failure.
         <pre><code>
-        {
+        struct {
             Code: int32,
             Reason: string,
             Description: string
@@ -909,7 +1080,7 @@
         <h2>DataContainer</h2>
         A struct containing the path of a signal and one or more data points for the signal.
         <pre><code>
-        {
+        struct {
             Path: string,
             SignalData: []DataPoint
         }
@@ -921,7 +1092,7 @@
         A struct containing one data point. A data point contains a signal value and its associated timestamp.
         The value has string format which is used to represent the value for any of the datatypes supported by HIM.
         <pre><code>
-        {
+        struct {
             Value: string,
             Timestamp: string
         }
@@ -956,7 +1127,7 @@
         <h2>MatrixId</h2>
         A struct containing the Id of one element of a two-dimensional matrix.
         <pre><code>
-        {
+        struct {
             RowName: string,
             ColumnName: string
         }
@@ -983,7 +1154,7 @@
         <h2>SeatMovementType</h2>
         A struct containing the name and description of aa seat movement type.
         <pre><code>
-        {
+        struct {
             Name: string,
             Description: string
         }
