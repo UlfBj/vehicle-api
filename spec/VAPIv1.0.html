@@ -183,10 +183,10 @@
         <a href="#connect-procedure">Initiate a connection session to a vehicle</a>.
         </li>
         <li>
-        <a href="#terminate-connection-procedure">Terminate the connection session to a vehicle</a>.
+        <a href="#disconnect-procedure">Terminate the connection session to a vehicle</a>.
         </li>
         <li>
-        <a href="#terminate-service-procedure">Terminate an ongoing procedure execution</a>.
+        <a href="#cancel-service-procedure">Cancel an ongoing procedure execution</a>.
         </li>
         <li>
         <a href="#get-st-credentials-procedure">Request for short term credentials</a>.
@@ -248,7 +248,8 @@
             {
               Status: ProcedureStatus,
               Error: *ErrorData,
-              VehicleId: int32
+              VehicleId: uint32,
+              Protocol: []string,
               LtCredentials: string
             }
             </code></pre>
@@ -258,6 +259,8 @@
             VehicleId: The reference to the vehicle that shall be used as input in procedures that require a vehicle id.
             The scope of this Id is limited to run-time scope of the client calling Connect.
             It should be a randomly generated value to prevent other clients to guess its value.<br>
+            <a href="#supported-protocol">Protocol: </a>A list of supported protocols.
+            The first on th list is set as default.<br>
             LtCredentials: Long term credentials that may have a lifetime equal to the vehicle connectivity session.
             If not used then it shall be set to an empty string.
         </section>
@@ -283,18 +286,22 @@
             </ul>
             </li>
             <li>
-             The VehicleId and LtCredentials parameters are invalid if Status is set to FAILED.
+             The VehicleId, Protocol and LtCredentials parameters are invalid if Status is set to FAILED.
             </li>
           </ul>
         </section>
       </section>
 
-      <section id="terminate-connection-procedure">
-        <h2>TerminateConnection</h2>
+      <section id="disconnect-procedure">
+        <h2>Disconnect</h2>
       </section>
 
-      <section id="terminate-service-procedure">
-        <h2>TerminateService</h2>
+      <section id="cancel-service-procedure">
+        <h2>CancelService</h2>
+      </section>
+
+      <section id="select-protocol-procedure">
+        <h2>SelectProtocol</h2>
       </section>
 
       <section id="get-st-credentials-procedure">
@@ -391,7 +398,7 @@
 
         <section id="Invoke-signature">
           <h2>Signature</h2>
-          <pre><code>Invoke(vehicleId: uint32, procedureName: string, procedureInput: string, stCredentials string, callback *fcn(InvokeOutput): InvokeOutput</code></pre>
+          <pre><code>Invoke(vehicleId: uint32, procedureName: string, procedureInput: string, stCredentials: string, callback: *fcn(InvokeOutput): InvokeOutput</code></pre>
         </section>
 
         <section id="Invoke-parameters">
@@ -444,15 +451,15 @@
             {
               Status: ProcedureStatus,
               Error: *ErrorData,
-              InvokeOutputParams: string
-              SessionHandle: int32
+              InvokeOutputParams: string,
+              SessionHandle: uint32
             }
             </code></pre>
             Struct member descriptions:<br>
             <a href="#procedure-status">Status: </a>The status of the latest service call to it.<br>
             <a href="#error-data">Error: </a>Error information for the latest service call, if error occurred.<br>
             InvokeOutputParams: The output parameters shall be a JSON object following the same syntax as used for the input parameters.<br>
-            SessionHandle: A reference to the subscription session that the client may use to call <a href="#terminate-service-procedure">TerminateService()</a>
+            SessionHandle: A reference to the subscription session that the client may use to call <a href="#cancel-service-procedure">CancelService()</a>
             It may be set to zero in which case it is invalid.
         </section>
 
@@ -483,7 +490,7 @@
 
         <section id="getmetadata-signature">
           <h2>Signature</h2>
-          <pre><code>GetMetadata(vehicleId: uint32, path: string, stCredentials string, callback *fcn(GetMetadataOutput): GetMetadataOutput</code></pre>
+          <pre><code>GetMetadata(vehicleId: uint32, path: string, stCredentials: string, callback: *fcn(GetMetadataOutput): GetMetadataOutput</code></pre>
         </section>
 
         <section id="getmetadata-parameters">
@@ -522,15 +529,15 @@
             {
               Status: ProcedureStatus,
               Error: *ErrorData,
-              Metadata: string
-              SessionHandle: int32
+              Metadata: string,
+              SessionHandle: uint32
             }
             </code></pre>
             Struct member descriptions:<br>
             <a href="#procedure-status">Status: </a>The status of the latest service call to it.<br>
             <a href="#error-data">Error: </a>Error information for the latest service call, if error occurred.<br>
             Metadata: A JSON object containing the metadata from the signals or services in the subtree.<br>
-            SessionHandle: A reference to the subscription session that the client may use to call <a href="#terminate-service-procedure">TerminateService()</a>.
+            SessionHandle: A reference to the subscription session that the client may use to call <a href="#cancel-service-procedure">CancelService()</a>.
             It may be set to zero in which case it is invalid.
         </section>
 
@@ -570,7 +577,7 @@
 
         <section id="get-signature">
           <h2>Signature</h2>
-          <pre><code>Get(vehicleId: uint32, path: string, filter: string, stCredentials string): GetOutput</code></pre>
+          <pre><code>Get(vehicleId: uint32, path: string, filter: string, stCredentials: string): GetOutput</code></pre>
         </section>
 
         <section id="get-parameters">
@@ -652,7 +659,7 @@
 
         <section id="subscribe-signature">
           <h2>Signature</h2>
-          <pre><code>Subscribe(vehicleId: uint32, path: string, filter: string, stCredentials string, callback *fcn(SubscribeOutput): SubscribeOutput</code></pre>
+          <pre><code>Subscribe(vehicleId: uint32, path: string, filter: string, stCredentials: string, callback: *fcn(SubscribeOutput): SubscribeOutput</code></pre>
         </section>
 
         <section id="subscribe-parameters">
@@ -697,15 +704,15 @@
             {
               Status: ProcedureStatus,
               Error: *ErrorData,
-              Data: []DataContainer
-              SessionHandle: int32
+              Data: []DataContainer,
+              SessionHandle: uint32
             }
             </code></pre>
             Struct member descriptions:<br>
             <a href="#procedure-status">Status: </a>The status of the latest service call to it.<br>
             <a href="#error-data">Error: </a>Error information for the latest service call, if error occurred.<br>
             <a href="#data-container">Data: </a>The requested signal data.<br>
-            SessionHandle: A reference to the subscription session that the client may use to call <a href="#terminate-service-procedure">TerminateService()</a>.
+            SessionHandle: A reference to the subscription session that the client may use to call <a href="#cancel-service-procedure">CancelService()</a>.
             It may be set to zero in which case it is invalid.
 
         </section>
@@ -927,14 +934,14 @@
         <p>
         This procedure performs all possible types of seat movements.
         It supports "synchronous" movement to any position provided as input to the service, 
-        and also "asynchronous" movement where the client terminates the service execution by invokation of <a href="#terminate-service-procedure">TerminateService()</a>.
+        and also "asynchronous" movement where the client terminates the service execution by invokation of <a href="#cancel-service-procedure">CancelService()</a>.
         In the asynchronous scenario the provided input to the service is typically one of the position range end points (zero or hundred percent).
         </p>
 
         <section id="move-seat-signature">
           <h2>Signature</h2>
-          <pre><code>MoveSeat(vehicleId: uint32, seatId MatrixId, movementType: SeatMovements, position: Percentage,
-          stCredentials string, callback *fcn(MoveSeatOutput): MoveSeatOutput</code></pre>
+          <pre><code>MoveSeat(vehicleId: uint32, seatId: MatrixId, movementType: string, position: Percentage,
+          stCredentials: string, callback: *fcn(MoveSeatOutput): MoveSeatOutput</code></pre>
         </section>
 
         <section id="move-seat-parameters">
@@ -966,7 +973,7 @@
               The short term credentials that was obtained by a call to <a href="#get-st-credentials-procedure">GetStCredentials()</a>.
             </li>
             <li>
-              <strong>callback</strong> (<span class="type">*fcn(SubscribeOutput)</span>)
+              <strong>callback</strong> (<span class="type">*fcn(MoveSeatOutput)</span>)
               <br>
               A pointer to a callback function that is called when an event message gets issued by the server.
             </li>
@@ -975,7 +982,7 @@
 
         <section id="move-seat-returns">
           <h2>Returns</h2>
-            <span class="type"><code>SubscribeOutput</code></span>
+            <span class="type"><code>MoveSeatOutput</code></span>
             <br>
             A struct containing the output data from the Subscribe procedure.
             This shall be returned both synchronously on the procedure  call and asynchronously on event trigger conditions.
@@ -983,15 +990,15 @@
             {
               Status: ProcedureStatus,
               Error: *ErrorData,
-              Data: []DataContainer
-              SessionHandle: int32
+              Position: Percentage,
+              SessionHandle: uint32
             }
             </code></pre>
             Struct member descriptions:<br>
             <a href="#procedure-status">Status: </a>The status of the latest service call to it.<br>
             <a href="#error-data">Error: </a>Error information for the latest service call, if error occurred.<br>
-            <a href="#data-container">Data: </a>The requested signal data.<br>
-            SessionHandle: A reference to the subscription session that the client may use to call <a href="#terminate-service-procedure">TerminateService()</a>.
+            <a href="#percentage">Percentage: </a>The current position of the seat movement.<br>
+            SessionHandle: A reference to the subscription session that the client may use to call <a href="#cancel-service-procedure">CancelService()</a>.
             It may be set to zero in which case it is invalid.
         </section>
 
@@ -1111,6 +1118,13 @@
         </code></pre>
       </section>
  
+      <section id="supported-protocol">
+        <h2>Supported protocols</h2>
+        A string array containing names of the supported protocols. The first on the list is set as default,
+        which can be changed by <a href="#select-protocol-procedure">SelectProtocol()</a> if multiple protocolsa are supported.
+        Protocol naming should be "MainProtocolName-SubProtocolName", e. g. "VISSv3.0-grpc".
+      </section>
+ 
       <section id="percentage">
         <h2>Percentage</h2>
         An integer value ranging from zero to one hundred.
@@ -1139,14 +1153,14 @@
         A two-dimensional matrix in which the number of elements may vary in the different rows.
         The matrix is represented as an array of RowDef elements.
         The Rowdef datatype is a struct with one element representing the name of the row,
-        and the other is a string representing a JSON string array containing the elements of that row.
+        and the other is a string array containing the elements of that row.
         <pre><code>
         RowDef: struct {
         {
             RowName: string,
-            ColumnNames: string
+            ColumnName: []string
         }
-        RaggedMatrix: []Rowdef
+        RaggedMatrix: []RowDef
         </code></pre>
       </section>
 
