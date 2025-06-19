@@ -42,11 +42,11 @@ The procedure typically executes in the context of the caller, while the server 
 and likely on a different execution platform.
 
 For a client using the signal support in VAPI the logical architecture would typically look as shown below.
-![VAPI architecture with remote signal endpoints](/images/VAPI-architecture-base-signals.jpg)
+![VAPI architecture with remote signal endpoints](/images/vapi-architecture-base-signals.jpg)
 While signal endpoints are always on the "remote" side of the server,
 for services their implementations can be deployed either remotely or locally, as shown in the figures below.
-![VAPI architecture with remote service endpoints](/images/VAPI-architecture-remote-endpoint.jpg)
-![VAPI architecture with local service endpoints](/images/VAPI-architecture-local-endpoint.jpg)
+![VAPI architecture with remote service endpoints](/images/vapi-architecture-remote-endpoint.jpg)
+![VAPI architecture with local service endpoints](/images/vapi-architecture-local-endpoint.jpg)
 
 The protocol used for the communication between client and server is not specified by VAPI, it is an implementation decision.
 The currently only existing implementation uses the COVESA [Vehicle Information Service Specification]() (VISSv3.x),
