@@ -169,6 +169,10 @@
         It shall be stated in the procedure documentation if it supports multiple execution instances.
         If not stated then it shall not support multiple execution instances.
         </li>
+        <li>
+        Procedures calls are agnostic to which transport protocol that is used.
+        If a session-based protocol is used then a successful <a href="#connect-procedure">Connect</a> call must have preceeded this call.
+        </li>
       </ul>
       </p>
     </section>
@@ -180,7 +184,13 @@
       </p>
       <ul>
         <li>
-        <a href="#connect-procedure">Initiate a connection session to a vehicle</a>.
+        <a href="#getvehicle-procedure">Initiate a connection session to a vehicle</a>.
+        </li>
+        <li>
+        <a href="#connect-procedure">Connect for a session with a vehicle</a>.
+        </li>
+        <li>
+        <a href="#service-inquiry-procedure">Inquire a vehicle about the services it supports</a>.
         </li>
         <li>
         <a href="#disconnect-procedure">Terminate the connection session to a vehicle</a>.
@@ -195,29 +205,114 @@
         <a href="#invoke-procedure">Invoke a service that is not part of the VAPI specification</a>.
         </li>
       </ul>
-      <section id="connect-procedure">
-        <h2>Connect</h2>
-        <p>Sets up a connectivity session with a vehicle.</p>
+      <section id="getvehicle-procedure">
+        <h2>GetVehicle</h2>
+        <p>Provides a vehicle reference and connectivity info for a specified vehicle.</p>
 
         <p>
-        This procedure sets up a connection with the vehicle that is associated with the input vehicle globally unique identity.
+        This procedure tries to retrieve connectivity data for the vehicle that is associated with the input vehicle globally unique identity.
         This identity may be a pseudo-VIN that has been derived from the vehicle VIN.
         How the client has obtained this identity is out-of-scope for this specification.
-        If it succeeds it will return a vehicle Id that shall be used as input in the procedures that require a vehicle Id.
+        If it succeeds it will return a vehicle Id that shall be used as input in the procedures that require a vehicle Id,
+        and data about which protocols that are available for connecting to it.
         </p>
 
-        <section id="connect-signature">
+        <section id="getvehicle-signature">
           <h2>Signature</h2>
-          <pre><code>Connect(vehicleGuid: string, clientCredentials string, protocol string): ConnectOutput</code></pre>
+          <pre><code>GetVehicle(vehicleGuid: string): GetVehicleOutput</code></pre>
         </section>
 
-        <section id="connect-parameters">
+        <section id="getvehicle-parameters">
           <h2>Parameters</h2>
           <ul class="param-list">
             <li>
               <strong>vehicleGuid</strong> (<span class="type">string</span>)
               <br>
               A globally unique reference to the vehicle.
+            </li>
+          </ul>
+        </section>
+
+        <section id="getvehicle-returns">
+          <h2>Returns</h2>
+            <span class="type"><code>GetVehicleOutput</code></span>
+            <br>
+            A struct containing the output data from the GetVehicle procedure.
+            <pre><code>
+            {
+              Status: ProcedureStatus,
+              Error: *ErrorData,
+              VehicleId: uint32,
+              Protocol: []string
+            }
+            </code></pre>
+            Struct member descriptions:<br>
+            <a href="#procedure-status">Status: </a>The status of the latest service call to it.<br>
+            <a href="#error-data">Error: </a>Error information for the latest service call, if error occurred.<br>
+            VehicleId: The reference to the vehicle that shall be used as input in procedures that require a vehicle id.
+            The scope of this Id is limited to run-time scope of the client calling GetVehicle.<br>
+            <a href="#supported-protocol">Protocol: </a>A list of supported protocols.
+        </section>
+
+        <section id="getvehicle-error">
+          <h2>Error</h2>
+          <ul class="error-list">
+            <li>
+            If Status is set to FAILED then Error must be available and populated with error data, else the pointer to Error shall be set to nil.
+            </li>
+            <li>
+            Error data shall at least support the error cases:
+            <ul>
+              <li>
+              Unknown globally unique vehicle identity.
+              </li>
+              <li>
+              Vehicle connection data not available.
+              </li>
+              <li>
+              Connecting to vehicle failed.
+              </li>
+            </ul>
+            </li>
+            <li>
+             The VehicleId and Protocol parameters are invalid if Status is set to FAILED.
+            </li>
+          </ul>
+        </section>
+      </section>
+
+      <section id="releasevehicle-procedure">
+        <h2>ReleaseVehicle</h2>
+      </section>
+
+      <section id="connect-procedure">
+        <h2>Connect</h2>
+        <p>Sets up a connectivity session with a vehicle.</p>
+
+        <p>
+        This procedure sets up a connection with the vehicle over the specified protocol.
+        It must be called for any session-based protocol before invoking any service over it.
+        </p>
+
+        <section id="connect-signature">
+          <h2>Signature</h2>
+          <pre><code>Connect(vehicleId: uint32, protocol: string, clientCredentials: string): ConnectOutput</code></pre>
+        </section>
+
+        <section id="connect-parameters">
+          <h2>Parameters</h2>
+          <ul class="param-list">
+            <li>
+              <strong>vehicleId</strong> (<span class="type">uint32</span>)
+              <br>
+              A reference to the vehicle that was obtained in a previous <a href="#getvehicle-procedure">GetVehicle</a>.
+            </li>
+            <li>
+              <strong>protocol</strong> (<span class="type">string</span>)
+              <br>
+              If the connectivity solution that is used by the VAPI implementation supports use of multiple transport
+              protocols then this parameter allows the client to select which to use.
+              The names representing the supported protocols must align with the names used by the implemented connectivity solution.
             </li>
             <li>
               <strong>clientCredentials</strong> (<span class="type">string</span>)
@@ -227,14 +322,6 @@
               as well as what is required of it to become verified successfully.
               This information may be available in the context of the implemented connectivity solution.
               If it is not required then it shall be set to an empty string.
-            </li>
-            <li>
-              <strong>protocol</strong> (<span class="type">string</span>)
-              <br>
-              If the connectivity solution that is used by the VAPI implementation supports use of multiple transport
-              protocols then this parameter allows the client to select which to use.
-              An empty string leaves the selection to the implementation.
-              The names representing the supported protocols must align with the names used by the implemented connectivity solution.
             </li>
           </ul>
         </section>
@@ -248,21 +335,14 @@
             {
               Status: ProcedureStatus,
               Error: *ErrorData,
-              VehicleId: uint32,
-              Protocol: []string,
-              LtCredentials: string
+              LtCredential: string
             }
             </code></pre>
             Struct member descriptions:<br>
             <a href="#procedure-status">Status: </a>The status of the latest service call to it.<br>
             <a href="#error-data">Error: </a>Error information for the latest service call, if error occurred.<br>
-            VehicleId: The reference to the vehicle that shall be used as input in procedures that require a vehicle id.
-            The scope of this Id is limited to run-time scope of the client calling Connect.
-            It should be a randomly generated value to prevent other clients to guess its value.<br>
-            <a href="#supported-protocol">Protocol: </a>A list of supported protocols.
-            The first on th list is set as default.<br>
-            LtCredentials: Long term credentials that may have a lifetime equal to the vehicle connectivity session.
-            If not used then it shall be set to an empty string.
+            LtCredential: Long term credentials that may have a lifetime equal to the vehicle connectivity session.
+            If not used then it is set to an empty string.
         </section>
 
         <section id="connect-error">
@@ -286,7 +366,7 @@
             </ul>
             </li>
             <li>
-             The VehicleId, Protocol and LtCredentials parameters are invalid if Status is set to FAILED.
+             The LtCredential parameter is invalid if Status is set to FAILED.
             </li>
           </ul>
         </section>
@@ -296,12 +376,82 @@
         <h2>Disconnect</h2>
       </section>
 
+      <section id="select-protocol-procedure">
+        <h2>SelectProtocol</h2>
+      </section>
+
       <section id="cancel-service-procedure">
         <h2>CancelService</h2>
       </section>
 
-      <section id="select-protocol-procedure">
-        <h2>SelectProtocol</h2>
+      <section id="service-inquiry-procedure">
+        <h2>ServiceInquiry</h2>
+        <p>Inquiry to a vehicle about auxillary services that it supports.</p>
+
+        <p>
+        This procedure inquires a vehicle about any auxillary services that it supports.
+        These services can then be called by calling the <a href="#invoke-procedure">Invoke</a> procedure.
+        </p>
+
+        <section id="service-inquiry-signature">
+          <h2>Signature</h2>
+          <pre><code>ServiceInquiry(vehicleId: uint32): ServiceInquiryOutput</code></pre>
+        </section>
+
+        <section id="service-inquiry-parameters">
+          <h2>Parameters</h2>
+          <ul class="param-list">
+            <li>
+              <strong>vehicleId</strong> (<span class="type">uint32</span>)
+              <br>
+              A reference to the vehicle that was obtained in a previous <a href="#getvehicle-procedure">GetVehicle</a>.
+            </li>
+          </ul>
+        </section>
+
+        <section id="service-inquiry-returns">
+          <h2>Returns</h2>
+            <span class="type"><code>ServiceInquiryOutput</code></span>
+            <br>
+            A struct containing the output data from the ServiceInquiry procedure.
+            <pre><code>
+            {
+              Status: ProcedureStatus,
+              Error: *ErrorData,
+              Service: []ServiceSignature
+            }
+            </code></pre>
+            Struct member descriptions:<br>
+            <a href="#procedure-status">Status: </a>The status of the latest service call to it.<br>
+            <a href="#error-data">Error: </a>Error information for the latest service call, if error occurred.<br>
+            <a href="#service-signature">Service: </a>An array of structs describing the service signature.
+        </section>
+
+        <section id="service-inquiry-error">
+          <h2>Error</h2>
+          <ul class="error-list">
+            <li>
+            If Status is set to FAILED then Error must be available and populated with error data, else the pointer to Error shall be set to nil.
+            </li>
+            <li>
+            Error data shall at least support the error cases:
+            <ul>
+              <li>
+              Unknown globally unique vehicle identity.
+              </li>
+              <li>
+              Vehicle connection data not available.
+              </li>
+              <li>
+              Connecting to vehicle failed.
+              </li>
+            </ul>
+            </li>
+            <li>
+             The Service parameter is invalid if Status is set to FAILED.
+            </li>
+          </ul>
+        </section>
       </section>
 
       <section id="get-st-credentials-procedure">
@@ -315,7 +465,7 @@
 
         <section id="get-st-credentials-signature">
           <h2>Signature</h2>
-          <pre><code>GetStCredentials(vehicleId: uint32, ltCredentials string, purpose string): GetStCredentialsOutput</code></pre>
+          <pre><code>GetStCredentials(vehicleId: uint32, LtCredential string, purpose string): GetStCredentialsOutput</code></pre>
         </section>
 
         <section id="get-st-credentials-parameters">
@@ -324,12 +474,12 @@
             <li>
               <strong>vehicleId</strong> (<span class="type">uint32</span>)
               <br>
-              A reference to the vehicle that was obtained in a previous <a href="#connect-procedure">Connect()</a>.
+              A reference to the vehicle that was obtained in a previous <a href="#getvehicle-procedure">GetVehicle</a>.
             </li>
             <li>
-              <strong>ltCredentials</strong> (<span class="type">string</span>)
+              <strong>LtCredential</strong> (<span class="type">string</span>)
               <br>
-              The long term credentials that was obtained in a previous <a href="#connect-procedure">Connect()</a>.
+              The long term credentials that was obtained in a previous <a href="#getvehicle-procedure">GetVehicle</a>.
               If it is not required then it shall be set to an empty string.
             </li>
             <li>
@@ -390,15 +540,17 @@
 
       <section id="invoke-procedure">
         <h2>Invoke</h2>
-        <p>The Invoke procedure enables procedures that are not part of the VAPI specification to be invoked.</p>
+        <p>The Invoke procedure is used to call auxillary services that are not part of the VAPI specification.</p>
 
         <p>
-        The Invoke procedure takes a procedure name and its input parameters as input.
+        If a service that is not part of the VAPI specification has been installed in the vehicle then information about it shall be
+        accessible to the client by calling either the <a href="#service-inquiry-procedure">ServiceInquiry</a>
+        or the <a href="#getmetadata-procedure">GetMetadata</a> procedure.
         </p>
 
-        <section id="Invoke-signature">
+        <section id="invoke-signature">
           <h2>Signature</h2>
-          <pre><code>Invoke(vehicleId: uint32, procedureName: string, procedureInput: string, stCredentials: string, callback: *fcn(InvokeOutput): InvokeOutput</code></pre>
+          <pre><code>Invoke(vehicleId: uint32, serviceName: string, procedureInput: string, stCredentials: string, callback: *fcn(InvokeOutput): InvokeOutput</code></pre>
         </section>
 
         <section id="Invoke-parameters">
@@ -407,41 +559,41 @@
             <li>
               <strong>vehicleId</strong> (<span class="type">uint32</span>)
               <br>
-              A reference to the vehicle that was obtained in a previous <a href="#connect-procedure">Connect()</a>.
+              A reference to the vehicle that was obtained in a previous <a href="#getvehicle-procedure">GetVehicle</a>.
             </li>
             <li>
-              <strong>procedureName</strong> (<span class="type">string</span>)
+              <strong>serviceName</strong> (<span class="type">string</span>)
               <br>
-              If a procedure that is not part of the VAPI specification has been installed in the vehicle then information about it shall be
-              accessible for the client by invokation of the <a href="#getmetadata-procedure">GetMetadata()</a> procedure.
             </li>
+            The name of the auxillary service.
             <li>
               <strong>procedureInput</strong> (<span class="type">string</span>)
               <br>
-              The input parameters of the procedure to be called are supplied as a JSON object.
-              The syntax shall be as follows (with two input parameters in the example).
-              <code>
+              The input parameters of the service to be called are supplied as a JSON object.
+              The syntax shall be as follows with both parameter names and values represented as strings (two input parameters in the example).
+            <pre><code>
               {
                   "parameterName1": "value1",
                   "parameterName2": "value2"
               }          
-              </code>
-              An empty string reprsents the case with no input parameters.
+              </code></pre>
+              An empty string represents the case with a service having no input parameters.
             </li>
             <li>
               <strong>stCredentials</strong> (<span class="type">string</span>)
               <br>
-              The short term credentials that was obtained by a call to <a href="#get-st-credentials-procedure">GetStCredentials()</a>.
+              The short term credentials that was obtained by a call to <a href="#get-st-credentials-procedure">GetStCredentials</a>.
             </li>
             <li>
               <strong>callback</strong> (<span class="type">*fcn(InvokeOutput)</span>)
               <br>
-              A pointer to a callback function that is called when an event message gets issued by the server.
+              A pointer to a callback function that is called if an event message gets issued by the service.
+              If set to nil callbacks will not be issued.
             </li>
           </ul>
         </section>
 
-        <section id="Invoke-returns">
+        <section id="invoke-returns">
           <h2>Returns</h2>
             <span class="type"><code>InvokeOutput</code></span>
             <br>
@@ -451,19 +603,19 @@
             {
               Status: ProcedureStatus,
               Error: *ErrorData,
-              InvokeOutputParams: string,
-              SessionHandle: uint32
+              ServiceOutput: string,
+              ServiceId: uint32
             }
             </code></pre>
             Struct member descriptions:<br>
             <a href="#procedure-status">Status: </a>The status of the latest service call to it.<br>
             <a href="#error-data">Error: </a>Error information for the latest service call, if error occurred.<br>
-            InvokeOutputParams: The output parameters shall be a JSON object following the same syntax as used for the input parameters.<br>
-            SessionHandle: A reference to the subscription session that the client may use to call <a href="#cancel-service-procedure">CancelService()</a>
+            ServiceOutput: The service output parameters is a JSON object following the same syntax as used for the input parameters.<br>
+            ServiceId: A reference to the service session that the client may use to call <a href="#cancel-service-procedure">CancelService</a>.
             It may be set to zero in which case it is invalid.
         </section>
 
-        <section id="Invoke-error">
+        <section id="invoke-error">
           <h2>Error</h2>
           <ul class="error-list">
             <li>
@@ -473,7 +625,7 @@
             Error data shall conform to the error data definitions in [[VISS]] for signals.
             </li>
             <li>
-             The InvokeOutputParams and SessionHandle parameters are invalid if Status is set to FAILED.
+             The ServiceOutput and ServiceId parameters are invalid if Status is set to FAILED.
             </li>
           </ul>
         </section>
@@ -499,7 +651,7 @@
             <li>
               <strong>vehicleId</strong> (<span class="type">uint32</span>)
               <br>
-              A reference to the vehicle that was obtained in a previous <a href="#connect-procedure">Connect()</a>.
+              A reference to the vehicle that was obtained in a previous <a href="#getvehicle-procedure">GetVehicle</a>.
             </li>
             <li>
               <strong>path</strong> (<span class="type">string</span>)
@@ -509,12 +661,13 @@
             <li>
               <strong>stCredentials</strong> (<span class="type">string</span>)
               <br>
-              The short term credentials that was obtained by a call to <a href="#get-st-credentials-procedure">GetStCredentials()</a>.
+              The short term credentials that was obtained by a call to <a href="#get-st-credentials-procedure">GetStCredentials</a>.
             </li>
             <li>
               <strong>callback</strong> (<span class="type">*fcn(getmetadataOutput)</span>)
               <br>
-              A pointer to a callback function that is called when an event message gets issued by the server.
+              A pointer to a callback function that is called if an event message gets issued by the service.
+              If set to nil callbacks will not be issued.
             </li>
           </ul>
         </section>
@@ -530,14 +683,14 @@
               Status: ProcedureStatus,
               Error: *ErrorData,
               Metadata: string,
-              SessionHandle: uint32
+              ServiceId: uint32
             }
             </code></pre>
             Struct member descriptions:<br>
             <a href="#procedure-status">Status: </a>The status of the latest service call to it.<br>
             <a href="#error-data">Error: </a>Error information for the latest service call, if error occurred.<br>
             Metadata: A JSON object containing the metadata from the signals or services in the subtree.<br>
-            SessionHandle: A reference to the subscription session that the client may use to call <a href="#cancel-service-procedure">CancelService()</a>.
+            ServiceId: A reference to the service session that the client may use to call <a href="#cancel-service-procedure">CancelService</a>.
             It may be set to zero in which case it is invalid.
         </section>
 
@@ -551,7 +704,7 @@
             Error data shall conform to the error data definitions in [[VISS]] for signals.
             </li>
             <li>
-             The Metadata and SessionHandle parameters are invalid if Status is set to FAILED.
+             The Metadata and ServiceId parameters are invalid if Status is set to FAILED.
             </li>
           </ul>
         </section>
@@ -586,7 +739,7 @@
             <li>
               <strong>vehicleId</strong> (<span class="type">uint32</span>)
               <br>
-              A reference to the vehicle that was obtained in a previous <a href="#connect-procedure">Connect()</a>.
+              A reference to the vehicle that was obtained in a previous <a href="#getvehicle-procedure">GetVehicle</a>.
             </li>
             <li>
               <strong>path</strong> (<span class="type">string</span>)
@@ -602,7 +755,7 @@
             <li>
               <strong>stCredentials</strong> (<span class="type">string</span>)
               <br>
-              The short term credentials that was obtained by a call to <a href="#get-st-credentials-procedure">GetStCredentials()</a>.
+              The short term credentials that was obtained by a call to <a href="#get-st-credentials-procedure">GetStCredentials</a>.
             </li>
           </ul>
         </section>
@@ -668,7 +821,7 @@
             <li>
               <strong>vehicleId</strong> (<span class="type">uint32</span>)
               <br>
-              A reference to the vehicle that was obtained in a previous <a href="#connect-procedure">Connect()</a>.
+              A reference to the vehicle that was obtained in a previous <a href="#getvehicle-procedure">GetVehicle</a>.
             </li>
             <li>
               <strong>path</strong> (<span class="type">string</span>)
@@ -684,12 +837,13 @@
             <li>
               <strong>stCredentials</strong> (<span class="type">string</span>)
               <br>
-              The short term credentials that was obtained by a call to <a href="#get-st-credentials-procedure">GetStCredentials()</a>.
+              The short term credentials that was obtained by a call to <a href="#get-st-credentials-procedure">GetStCredentials</a>.
             </li>
             <li>
               <strong>callback</strong> (<span class="type">*fcn(SubscribeOutput)</span>)
               <br>
-              A pointer to a callback function that is called when an event message gets issued by the server.
+              A pointer to a callback function that is called if an event message gets issued by the service.
+              If set to nil callbacks will not be issued.
             </li>
           </ul>
         </section>
@@ -705,14 +859,14 @@
               Status: ProcedureStatus,
               Error: *ErrorData,
               Data: []DataContainer,
-              SessionHandle: uint32
+              ServiceId: uint32
             }
             </code></pre>
             Struct member descriptions:<br>
             <a href="#procedure-status">Status: </a>The status of the latest service call to it.<br>
             <a href="#error-data">Error: </a>Error information for the latest service call, if error occurred.<br>
             <a href="#data-container">Data: </a>The requested signal data.<br>
-            SessionHandle: A reference to the subscription session that the client may use to call <a href="#cancel-service-procedure">CancelService()</a>.
+            ServiceId: A reference to the service session that the client may use to call <a href="#cancel-service-procedure">CancelService</a>.
             It may be set to zero in which case it is invalid.
 
         </section>
@@ -727,7 +881,7 @@
             Error data shall conform to the error data definitions in [[VISS]] for signals.
             </li>
             <li>
-             The Data and SessionHandle parameters are invalid if Status is set to FAILED.
+             The Data and ServiceId parameters are invalid if Status is set to FAILED.
             </li>
           </ul>
         </section>
@@ -756,10 +910,10 @@
       <strong><a href="#hvac-service-group">HVAC</a></strong>
       </li>
       <li>
-      <strong><a href="#exterior-lightning-service-group">Exterior Lightning</a></strong>
+      <strong><a href="#exterior-lighting-service-group">Exterior lighting</a></strong>
       </li>
       <li>
-      <strong><a href="#interior-lightning-service-group">Interior Lightning</a></strong>
+      <strong><a href="#interior-lighting-service-group">Interior lighting</a></strong>
       </li>
     </ul>
     </p>
@@ -770,50 +924,51 @@
       The seating service group consists of all services related to the vehicle seating.
       </p>
 
-    <section id="get-properties-seatid-procedure">
-      <h2>GetPropertiesSeatId</h2>
-        <p>Get the available seat Ids in the vehicle.</p>
+    <section id="get-properties-seating-procedure">
+      <h2>GetPropertiesSeating</h2>
+        <p>Get the available properties for seating in the vehicle.</p>
 
-        <p>This procedure retrieves the latest available value with associated timestamp of the signal that is referenced by the input path.
-        It is possible to reference multiple signals in one call.<br>
+        <p>This procedure retrieves the properties related to the seating service group.<br>
         This procedure supports multiple execution instances.
         </p>
 
-        <section id="get-properties-seatid-signature">
+        <section id="get-properties-seating-signature">
           <h2>Signature</h2>
-          <pre><code>GetPropertiesSeatId(vehicleId: uint32): GetPropertiesSeatIdOutput</code></pre>
+          <pre><code>GetPropertiesSeating(vehicleId: uint32): GetPropertiesSeatingOutput</code></pre>
         </section>
 
-        <section id="get-properties-seatid-parameters">
+        <section id="get-properties-seating-parameters">
           <h2>Parameters</h2>
           <ul class="param-list">
             <li>
               <strong>vehicleId</strong> (<span class="type">uint32</span>)
               <br>
-              A reference to the vehicle that was obtained in a previous <a href="#connect-procedure">Connect()</a>.
+              A reference to the vehicle that was obtained in a previous <a href="#getvehicle-procedure">GetVehicle</a>.
             </li>
           </ul>
         </section>
 
-        <section id="get-properties-seatid-returns">
+        <section id="get-properties-seating-returns">
           <h2>Returns</h2>
-            <span class="type"><code>GetPropertiesSeatIdOutput</code></span>
+            <span class="type"><code>GetPropertiesSeatingOutput</code></span>
             <br>
-            A struct containing the output data from the GetPropertiesSeatId procedure.
+            A struct containing the output data from the GetPropertiesSeating procedure.
             <pre><code>
             {
               Status: ProcedureStatus,
               Error: *ErrorData,
-              SeatIds: RaggedMatrix
+              Id: RaggedMatrix
+              Movement: []SeatMovementType
             }
             </code></pre>
             Struct member descriptions:<br>
             <a href="#procedure-status">Status: </a>The status of the latest service call to it.<br>
             <a href="#error-data">Error: </a>Error information for the latest service call, if error occurred.<br>
-            <a href="#ragged-matrix">SeatIds: </a>A ragged matrix of seat identities.
+            <a href="#ragged-matrix">Id: </a>A ragged matrix of seat identities.<br>
+            <a href="#seat-movement">Movement: </a>An array of structs describing the seat movement types.
         </section>
 
-        <section id="get-properties-seatid-error">
+        <section id="get-properties-seating-error">
           <h2>Error</h2>
           <ul class="error-list">
             <li>
@@ -823,105 +978,7 @@
             Error data shall conform to the error data definitions in [[VISS]] for signals.
             </li>
             <li>
-             The SeatIds parameter is invalid if Status is set to FAILED.
-            </li>
-          </ul>
-        </section>
-    </section>
-
-    <section id="get-properties-seatmovement-procedure">
-      <h2>GetPropertiesSeatMovement</h2>
-        <p>Get the supported seat movement types in the vehicle.</p>
-
-        <p>
-        This procedure retrieves the supported set of movement types in the vehicle.
-        The following non-exhaustive list of names should be used for the supported movement types:
-          <ul>
-            <li>
-              <strong>longitudal:</strong>
-              Seat movement in the direction parallel to the driving direction.
-              Forward/backward movements with max backwards being zero percentage.
-            </li>
-            <li>
-              <strong>lateral:</strong>
-              Seat movement in the direction anti-parallel to the driving direction, in the horizontal plane.
-              Left/right movements with max left being zero percentage.
-            </li>
-            <li>
-              <strong>vertical:</strong>
-              Seat movement in the vertical direction to the driving plane.
-              Up/down movements with max down being zero percentage.
-            </li>
-            <li>
-              <strong>tilt:</strong>
-              Angular seat movement of the backrest relative the driving plane.
-              Tilt/recline movements with max recline being zero percentage.
-            </li>
-            <li>
-              <strong>lumbar:</strong>
-              Seat movement of the lumber support.
-              Inflate/deflate movements with max deflate being zero percentage.
-            </li>
-            <li>
-              <strong>headrest-vertical:</strong>
-              Seat headrest movement the vertical direction to the driving plane.
-              Up/down movements with max down being zero percentage.
-            </li>
-            <li>
-              <strong>headrest-tilt:</strong>
-              Angular movement of the seat headrest relative to the driving plane.
-              Tilt/recline movements with max recline being zero percentage.
-            </li>
-          </ul>
-          Movement types not covered by the list may be added in an implementation.
-        </p>
-
-        <section id="get-properties-seatid-signature">
-          <h2>Signature</h2>
-          <pre><code>GetPropertiesSeatMovement(vehicleId: uint32): GetPropertiesSeatMovementOutput</code></pre>
-        </section>
-
-        <section id="get-properties-seatid-parameters">
-          <h2>Parameters</h2>
-          <ul class="param-list">
-            <li>
-              <strong>vehicleId</strong> (<span class="type">uint32</span>)
-              <br>
-              A reference to the vehicle that was obtained in a previous <a href="#connect-procedure">Connect()</a>.
-            </li>
-          </ul>
-        </section>
-
-        <section id="get-properties-seatid-returns">
-          <h2>Returns</h2>
-            <span class="type"><code>GetPropertiesSeatMovementOutput</code></span>
-            <br>
-            A struct containing the output data from the GetPropertiesSeatMovement procedure.
-            <pre><code>
-            {
-              Status: ProcedureStatus,
-              Error: *ErrorData,
-              SeatMovements: []SeatMovementType
-            }
-            </code></pre>
-            Struct member descriptions:<br>
-            <a href="#procedure-status">Status: </a>The status of the latest service call to it.<br>
-            <a href="#error-data">Error: </a>Error information for the latest service call, if error occurred.<br>
-            <a href="#seatmovement-type">SeatMovements: </a>
-            A struct array containing names and descriptions of the different seat movement types supported by the vehicle.
-        </section>
-
-        <section id="get-properties-seatid-error">
-          <h2>Error</h2>
-          <ul class="error-list">
-            <li>
-            If Status is set to FAILED then Error must be available and populated with error data, else the pointer to Error shall be set to nil.
-            </li>
-            <li>
-            Error data shall conform to the error data definitions in [[VISS]] for signals.
-            </li>
-            <li>
-             The SeatMovements parameter is invalid if Status is set to FAILED.
+             The Id and Movement parameters are invalid if Status is set to FAILED.
             </li>
           </ul>
         </section>
@@ -934,7 +991,7 @@
         <p>
         This procedure performs all possible types of seat movements.
         It supports "synchronous" movement to any position provided as input to the service, 
-        and also "asynchronous" movement where the client terminates the service execution by invokation of <a href="#cancel-service-procedure">CancelService()</a>.
+        and also "asynchronous" movement where the client terminates the service execution by invokation of <a href="#cancel-service-procedure">CancelService</a>.
         In the asynchronous scenario the provided input to the service is typically one of the position range end points (zero or hundred percent).
         </p>
 
@@ -950,7 +1007,7 @@
             <li>
               <strong>vehicleId</strong> (<span class="type">uint32</span>)
               <br>
-              A reference to the vehicle that was obtained in a previous <a href="#connect-procedure">Connect()</a>.
+              A reference to the vehicle that was obtained in a previous <a href="#getvehicle-procedure">GetVehicle</a>.
             </li>
             <li>
               <strong>seatId</strong> (<span class="type"><a href="#matrix-id">MatrixId</a></span>)
@@ -960,22 +1017,23 @@
             <li>
               <strong>movementType</strong> (<span class="type">string</span>)
               <br>
-              The seat movement type must be one of the SeatMovements elements retrieved by <a href="#get-properties-seatmovement-procedure">GetPropertiesSeatMovement()</a>.
+              The seat movement type must be one of the SeatMovements elements retrieved by <a href="#get-properties-seating-procedure">GetPropertiesSeating</a>.
             </li>
             <li>
-              <strong>position</strong> (<span class="type"><a href="#percentage">Percentage()</a></span>)
+              <strong>position</strong> (<span class="type"><a href="#percentage">Percentage</a></span>)
               <br>
               The seat movement regardless of type is expressed in a percentage where zero (0) is one end position and hundred (100) is the other end position.
             </li>
             <li>
               <strong>stCredentials</strong> (<span class="type">string</span>)
               <br>
-              The short term credentials that was obtained by a call to <a href="#get-st-credentials-procedure">GetStCredentials()</a>.
+              The short term credentials that was obtained by a call to <a href="#get-st-credentials-procedure">GetStCredentials</a>.
             </li>
             <li>
               <strong>callback</strong> (<span class="type">*fcn(MoveSeatOutput)</span>)
               <br>
-              A pointer to a callback function that is called when an event message gets issued by the server.
+              A pointer to a callback function that is called if an event message gets issued by the service.
+              If set to nil callbacks will not be issued.
             </li>
           </ul>
         </section>
@@ -991,14 +1049,14 @@
               Status: ProcedureStatus,
               Error: *ErrorData,
               Position: Percentage,
-              SessionHandle: uint32
+              ServiceId: uint32
             }
             </code></pre>
             Struct member descriptions:<br>
             <a href="#procedure-status">Status: </a>The status of the latest service call to it.<br>
             <a href="#error-data">Error: </a>Error information for the latest service call, if error occurred.<br>
-            <a href="#percentage">Percentage: </a>The current position of the seat movement.<br>
-            SessionHandle: A reference to the subscription session that the client may use to call <a href="#cancel-service-procedure">CancelService()</a>.
+            <a href="#percentage">Position: </a>The current position of the seat movement.<br>
+            ServiceId: A reference to the service session that the client may use to call <a href="#cancel-service-procedure">CancelService</a>.
             It may be set to zero in which case it is invalid.
         </section>
 
@@ -1012,7 +1070,7 @@
             Error data shall conform to the error data definitions in [[VISS]] for signals.
             </li>
             <li>
-             The Data and SessionHandle parameters are invalid if Status is set to FAILED.
+             The Position and ServiceId parameters are invalid if Status is set to FAILED.
             </li>
           </ul>
         </section>
@@ -1033,10 +1091,10 @@
     </section>
   </section>
 
-  <section id="exterior-lightning-service-group">
-    <h2>Exterior Lightning Service Group</h2>
+  <section id="exterior-lighting-service-group">
+    <h2>Exterior Lighting Service Group</h2>
     <p>
-      The Exterior Lightning service group consists of all services related to the vehicle exterior lightning.
+      The Exterior lighting service group consists of all services related to the vehicle exterior lighting.
     </p>
 
     <section id="xxx-procedure">
@@ -1047,10 +1105,10 @@
     </section>
   </section>
 
-  <section id="interior-lightning-service-group">
-    <h2>Interior Lightning Service Group</h2>
+  <section id="interior-lighting-service-group">
+    <h2>Interior Lighting Service Group</h2>
     <p>
-      The Interior Lightning service group consists of all services related to the vehicle interior lightning.
+      The Interior lighting service group consists of all services related to the vehicle interior lighting.
     </p>
 
     <section id="xxx-procedure">
@@ -1121,7 +1179,7 @@
       <section id="supported-protocol">
         <h2>Supported protocols</h2>
         A string array containing names of the supported protocols. The first on the list is set as default,
-        which can be changed by <a href="#select-protocol-procedure">SelectProtocol()</a> if multiple protocolsa are supported.
+        which can be changed by <a href="#select-protocol-procedure">SelectProtocol</a> if multiple protocolsa are supported.
         Protocol naming should be "MainProtocolName-SubProtocolName", e. g. "VISSv3.0-grpc".
       </section>
  
@@ -1164,13 +1222,69 @@
         </code></pre>
       </section>
 
-      <section id="seatmovement-type">
+      <section id="seat-movement">
         <h2>SeatMovementType</h2>
-        A struct containing the name and description of aa seat movement type.
+        A struct containing the name and description of seat movement types in the vehicle.
         <pre><code>
         struct {
             Name: string,
             Description: string
+        }
+        </code></pre>
+        If any of the following types of movement are supported then these names and descriptions should be used.
+          <ul>
+            <li>
+              <strong>longitudal:</strong>
+              Seat movement in the direction parallel to the driving direction.
+              Forward/backward movements with max backwards being zero percentage.
+            </li>
+            <li>
+              <strong>lateral:</strong>
+              Seat movement in the direction anti-parallel to the driving direction, in the horizontal plane.
+              Left/right movements with max left being zero percentage.
+            </li>
+            <li>
+              <strong>vertical:</strong>
+              Seat movement in the vertical direction to the driving plane.
+              Up/down movements with max down being zero percentage.
+            </li>
+            <li>
+              <strong>tilt:</strong>
+              Angular seat movement of the backrest relative the driving plane.
+              Tilt/recline movements with max recline being zero percentage.
+            </li>
+            <li>
+              <strong>lumbar:</strong>
+              Seat movement of the lumber support.
+              Inflate/deflate movements with max deflate being zero percentage.
+            </li>
+            <li>
+              <strong>headrest-vertical:</strong>
+              Seat headrest movement the vertical direction to the driving plane.
+              Up/down movements with max down being zero percentage.
+            </li>
+            <li>
+              <strong>headrest-tilt:</strong>
+              Angular movement of the seat headrest relative to the driving plane.
+              Tilt/recline movements with max recline being zero percentage.
+            </li>
+          </ul>
+          Movement types not covered by the list may be added in an implementation.
+      </section>
+
+      <section id="service-signature">
+        <h2>ServiceSignature</h2>
+        A struct describing the procedure signature of an auxillary service.<br>
+        The Name member shall be used as the serviceName input parameter when calling <a href="#invoke-procedure">Invoke</a> to perform a call of this service.<br>
+        The Input member is a JSON object describing the input parameters of the auxillary service.
+        The format described shall be used procedureInput input parameter in the Invoke call.<br>
+        The Output member is a JSON object describing the output parameters of the auxillary service.
+        This can be helpful when decoding the JSON object that is received in the response (and events if issued) from the service call.
+        <pre><code>
+        struct {
+            Name: string,
+            Input: string,
+            Output: string
         }
         </code></pre>
       </section>
