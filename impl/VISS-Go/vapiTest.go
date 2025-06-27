@@ -38,6 +38,13 @@ func subscribeOutUnpack(subscribeOut VapiViss.SubscribeOutput) {
 	}
 }
 
+func moveSeatOutUnpack(moveSeatOut VapiViss.MoveSeatOutput) {
+	showServiceStatus(moveSeatOut.Status, moveSeatOut.Error)
+	if moveSeatOut.Status != VapiViss.FAILED {
+		fmt.Printf("Position=%d\n", moveSeatOut.Position)
+	}
+}
+
 func showServiceStatus(status VapiViss.ProcedureStatus, err *VapiViss.ErrorData) {
 	fmt.Printf("Call status=%d\n", status)
 	if err != nil {
@@ -49,8 +56,6 @@ func showServiceStatus(status VapiViss.ProcedureStatus, err *VapiViss.ErrorData)
 
 func main() {
 	vehicleGuid1 := "pseudoVin1"
-	vehicleGuid2 := "pseudoVin2"  //must connect to unique socket => server on another IP addess
-//	vehicleGuid3 := "pseudoVin3"  //must connect to unique socket => server on another IP addess
 
 	var protocol string
 	initOut := VapiViss.GetVehicle(vehicleGuid1)
@@ -73,51 +78,8 @@ func main() {
 		fmt.Printf("Connected to vehicle id =%s\n", vehicleGuid1)
 	}
 
-	var protocol2 string
-	initOut = VapiViss.GetVehicle(vehicleGuid2)
-	fmt.Printf("Initiated connection to vehicle id =%s\nSupported protocols= [", vehicleGuid2)
-	for i := 0; i < len(initOut.Protocol); i++ {
-		fmt.Printf("%s ", initOut.Protocol[i])
-	}
-	fmt.Printf("]\n")
-	for i := 0; i < len(initOut.Protocol); i++ {
-		if strings.Contains(initOut.Protocol[i], "grpc") {
-			protocol2 = initOut.Protocol[i]
-		}
-	}
-	vehicle2 := initOut.VehicleId
-	out = VapiViss.Connect(vehicle2, protocol2, "")
-	if out.Error != nil {
-		fmt.Printf("Could not connect to vehicle id =%s. Error = %s.\n", vehicleGuid2, out.Error.Reason)
-	} else {
-		fmt.Printf("Connected to vehicle id =%s\n", vehicleGuid2)
-	}
-
-/*	initOut = VapiViss.GetVehicle(vehicleGuid3)
-	fmt.Printf("Initiated connection to vehicle id =%s\nSupported protocols= [", vehicleGuid3)
-	for i := 0; i< len(initOut.Protocol); i++ {
-		fmt.Printf("%s ", initOut.Protocol[i])
-	}
-	fmt.Printf("]\n")
-	for i := 0; i < len(initOut.Protocol); i++ {
-		if strings.Contains(initOut.Protocol[i], "ws") {
-			protocol = initOut.Protocol[i]
-		}
-	}
-	vehicle3 := initOut.VehicleId
-	VapiViss.SelectProtocol(vehicle3, protocol)
-	out = VapiViss.Connect(vehicle3, protocol, "")
-	if out.Error != nil {
-		fmt.Printf("Could not connect to vehicle id =%s. Error = %s.\n", vehicleGuid3, out.Error.Reason)
-		os.Exit(-1)
-	} else {
-		fmt.Printf("Connected to vehicle id =%s\n", vehicleGuid3)
-	}
-*/
 	path := "Vehicle.CurrentLocation"
-//	path := "Vehicle.CurrentLocation.Latitude"
 	filter := `{"variant":"paths","parameter":["Latitude", "Longitude"]}`
-//	filter := ""
 	VapiViss.SelectProtocol(vehicle1, protocol)
 	fmt.Printf(`Get(vehicle1, %s, %s, "")`+"\n", path, filter)
 	getOut := VapiViss.Get(vehicle1, path, filter, "")
@@ -134,17 +96,18 @@ func main() {
 	}
 
 	filter = `[{"variant":"paths","parameter":["Latitude", "Longitude"]}, {"variant":"timebased","parameter":{"period":"1000"}}]`
-//	filter = `{"variant":"timebased","parameter":{"period":"1000"}}`
 	fmt.Printf(`Subscribe(vehicle1, %s, %s, "", subscribeOutUnpack)`+"\n", path, filter)
 	subscribeOut := VapiViss.Subscribe(vehicle1, path, filter, "", subscribeOutUnpack)
 	subscribeOutUnpack(subscribeOut)
 
-	time.Sleep(2000 * time.Millisecond)  //wait to receive a few events...
+	fmt.Printf("Sleep for 3 secs to lreceive a few events...\n")
+	time.Sleep(3000 * time.Millisecond)
 
 	fmt.Printf("Unsubscribe(vehicle1, %d)\n", subscribeOut.ServiceId)
 	unsubscribeOut := VapiViss.Unsubscribe(vehicle1, subscribeOut.ServiceId)
 	showServiceStatus(unsubscribeOut.Status,unsubscribeOut.Error)
 
+	fmt.Printf("GetPropertiesSeating(vehicle1)\n")
 	getPropertiesSeatingOut := VapiViss.GetPropertiesSeating(vehicle1)
 	showServiceStatus(getPropertiesSeatingOut.Status, getPropertiesSeatingOut.Error)
 	if getPropertiesSeatingOut.Status == VapiViss.SUCCESSFUL {
@@ -164,6 +127,44 @@ func main() {
 		}
 	}
 
+	// to simulate an execution duration for MoveSeat, set it to an initial value different from what MoveSeat invokes
+	longitudinalPath := "Vehicle.Cabin.Seat.Row1.DriverSide.Position"
+	fmt.Printf(`Set(vehicle1, %s, 2, "")`+"\n", longitudinalPath)
+	setOut := VapiViss.Set(vehicle1, longitudinalPath, "2", "")
+	showServiceStatus(setOut.Status,setOut.Error)
+
+	fmt.Printf("Sleep for 20 secs to let execution duration from Set finish..\n")
+	time.Sleep(20 * time.Second)  //wait to let execution duration from Set finish 
+
+	var seatId VapiViss.MatrixId
+	seatId.RowName = getPropertiesSeatingOut.Id[0].RowName
+	seatId.ColumnName = getPropertiesSeatingOut.Id[0].ColumnName[0]
+	fmt.Printf("MoveSeat(vehicle1, seatId, longitudinal, %D, moveSeatOutUnpack)\n", VapiViss.BACKWARD)
+	moveSeatOut := VapiViss.MoveSeat(vehicle1, seatId, "longitudinal", VapiViss.BACKWARD, "", moveSeatOutUnpack)
+	showServiceStatus(moveSeatOut.Status, moveSeatOut.Error)
+
+	time.Sleep(30 * time.Second)  //wait to let execution duration from MoveSeat finish 
+
+/*	fmt.Printf(`Get(vehicle1, %s, %s, "")`+"\n", longitudinalPath, filter)
+	for i := 0; i < 10; i++ {
+		getOut = VapiViss.Get(vehicle1, longitudinalPath, filter, "")
+		showServiceStatus(getOut.Status,getOut.Error)
+		if getOut.Status == VapiViss.SUCCESSFUL {
+			for i := 0; i<len(getOut.Data); i++ {
+				fmt.Printf("Path=%s\n", getOut.Data[i].Path)
+				for j := 0; j<len(getOut.Data[i].Dp); j++ {
+					fmt.Printf("  Value=%s Ts=%s\n", getOut.Data[i].Dp[j].Value, getOut.Data[i].Dp[j].Timestamp)
+				}
+			}
+		} else {
+			fmt.Printf("Get() call to vehicle id =%s failed. Error reason = %s.\n", vehicleGuid1, getOut.Error.Reason)
+		}
+		time.Sleep(1 * time.Second)
+	}*/
+
+//	time.Sleep(20 * time.Second)  //wait to check if unsub leads to ws tear down
+
+/*	path = "Vehicle.Cabin.Seat.Row1.DriverSide.Position"
 	VapiViss.SelectProtocol(vehicle2, protocol2)
 	fmt.Printf(`Get(vehicle2, %s, %s, "")`+"\n", path, filter)
 	getOut = VapiViss.Get(vehicle2, path, filter, "")
@@ -181,7 +182,7 @@ func main() {
 
 	fmt.Printf("Disconnect(vehicle2, %s)\n", protocol2)
 	VapiViss.Disconnect(vehicle2, protocol2)
-//	VapiViss.Disconnect(vehicle3, protocol3)
+//	VapiViss.Disconnect(vehicle3, protocol3)*/
 	fmt.Printf("Disconnect(vehicle1, %s)\n", protocol)
 	disconnectOut := VapiViss.Disconnect(vehicle1, protocol)
 	showServiceStatus(disconnectOut.Status, disconnectOut.Error)

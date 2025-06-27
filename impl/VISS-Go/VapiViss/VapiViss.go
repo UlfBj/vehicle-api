@@ -18,7 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"math"
+//	"math"
 	"math/rand"
 
 	"flag"
@@ -47,34 +47,6 @@ type ErrorData struct {
 	Reason string
 	Description string
 }
-
-/*type VehicleAccess struct {
-	Service VehicleServices
-	Signal SignalServices
-}
-
-type SignalServices struct {
-	Get func(VehicleHandle, string, string, string) GetOutput
-	Set func(VehicleHandle, string, string, string, string) GeneralOutput
-	Subscribe func(VehicleHandle, string, string, string, func(SubscribeOutput)) SubscribeOutput
-	Unsubscribe func(VehicleHandle, uint32) GeneralOutput
-}
-
-type VehicleServices struct {
-	Seating SeatServices
-	HVAC HVACServices
-//	ExteriorLighting ExteriorLightingServices
-//	InteriorLighting InteriorLightingServices
-}
-
-type SeatServices struct {
-	GetPropertiesSeating func(VehicleHandle) GetPropertiesSeatingOutput
-	MoveSeat func(VehicleHandle, MatrixId, string, Percentage, string, func(MoveSeatOutput)) MoveSeatOutput
-}
-
-type HVACServices struct {
-	Service1 func(VehicleHandle) GeneralOutput
-}*/
 
 type ConnectivityData struct {
 	PortNo string
@@ -143,9 +115,440 @@ type GeneralOutput struct {
 	Error *ErrorData
 }
 
-func generateRandomUint32() VehicleHandle {
+// ****************** Common services ***************
+func GetVehicle(vehicleGuid string) GetVehicleOutput {
+	var vehConn VehicleConnection
+	var out GetVehicleOutput
+	vehConn.vehicleGuid = vehicleGuid
+	vehConn.connectivityData, vehConn.ipAddress = getSupportedConnectivity(vehicleGuid)
+	if vehConn.ipAddress == "" {
+		out.Status = FAILED
+		out.Error = getErrorObject(400, "invalid_data", "unknown vehicle")
+		return out
+	}
+	vehConn.vehicleId = VehicleHandle(generateRandomUint32())
+	addVehicleConnection(&vehConn)
+	out.VehicleId = vehConn.vehicleId
+	out.Protocol = make([]string, len(vehConn.connectivityData))
+	for i := 0; i< len(vehConn.connectivityData); i++ {
+		out.Protocol[i] = vehConn.connectivityData[i].Protocol
+	}
+	out.Status = SUCCESSFUL
+	if eventChan == nil {
+		eventChan = make(chan map[string]interface{})
+		go eventHandler(eventChan)
+	}
+	return out
+}
+
+func ReleaseVehicle(vehicleId VehicleHandle) GeneralOutput {
+	var out GeneralOutput
+	if vehConnList != nil {
+		iterator := &vehConnList
+		for *iterator != nil {
+			if (*iterator).vehicleId == vehicleId {
+				fmt.Printf("Disconnected to vehicle id=%s\n", (*iterator).vehicleGuid)
+				*iterator =(*iterator).next
+				out.Status = SUCCESSFUL
+				return out
+			}
+			iterator = &(*iterator).next
+		}
+	}
+	out.Status = FAILED
+	out.Error = getErrorObject(400, "invalid_data", "unknown vehicle")
+	return out
+}
+
+func Connect(vehicleId VehicleHandle, protocol string, clientCredentials string) ConnectOutput {
+	var out ConnectOutput
+	out.LtCredential = ""  // not implemented
+	out.Status = SUCCESSFUL
+	vehConn := getVehicleConnection(vehicleId)
+	if getConnHandle(vehConn.connectedData, protocol) != nil {
+		return out
+	}
+	matchingIndex := -1
+	for i := 0; i < len(vehConn.connectivityData); i++ {
+		if vehConn.connectivityData[i].Protocol == protocol {
+			matchingIndex = i
+			break
+		}
+	}
+	if matchingIndex >= 0 {
+		var connectedData ConnectedData
+		connectedData.protocol = protocol
+		connectedData.socket = vehConn.ipAddress + ":" + vehConn.connectivityData[matchingIndex].PortNo
+		if strings.Contains(protocol, "mqtt") || strings.Contains(protocol, "MQTT") {
+			connectedData.clientTopic = generateRandomString()  //needed for VISSv3.0-mqtt
+		}
+		connectedData.connHandle = connectToVehicle(protocol, connectedData.socket)
+		if connectedData.connHandle != nil {
+			addConnectedData(&(vehConn.connectedData), &connectedData)
+			vehConn.connectedProtocol = protocol
+			go receiveMessageWs(vehicleId, connectedData.connHandle.(*websocket.Conn), eventChan) //alla protokollen ska ha samma eventChan
+		} else {
+			out.Error = getErrorObject(502, "bad_gateway", "Protocol not supported")
+			out.Status = FAILED
+		}
+	} else {
+		out.Error = getErrorObject(400, "invalid_data", "The upstream server response was invalid")
+		out.Status = FAILED
+	}
+	return out
+}
+
+func Disconnect(vehicleId VehicleHandle, protocol string) GeneralOutput {
+	var out GeneralOutput
+	vehConn := getVehicleConnection(vehicleId)
+	if vehConn == nil {
+		out.Error = getErrorObject(400, "invalid_data", "Protocol not connected")
+		out.Status = FAILED
+		return out
+	}
+	// TODO: gör unsubscribe på activa services??
+	switch protocol {
+		case "VISSv3.0-wss": fallthrough
+		case "VISSv3.0-ws":
+			getConnHandle(vehConn.connectedData, protocol).(*websocket.Conn).Close()
+		default:
+			fmt.Printf("Disconnect: protocol not supported\n")
+			out.Error = getErrorObject(400, "invalid_data", "Protocol not supported")
+			out.Status = FAILED
+			return out
+	}
+	responseChan := getResponseChan(vehConn.connectedData, protocol)
+	m := make(map[string]interface{})
+	m["error"] = "terminate"   // not read by receiveMessageXX anyway ...
+	responseChan <- m
+	removeConnection(&vehConn, protocol)
+	out.Status = SUCCESSFUL
+	return out
+}
+
+func SelectProtocol(vehicleId VehicleHandle, protocol string) GeneralOutput {
+	var out GeneralOutput
+	vehConn := getVehicleConnection(vehicleId)
+	if vehConn != nil {
+		for i := 0; i<len(vehConn.connectivityData); i++ {
+			if vehConn.connectivityData[i].Protocol == protocol {
+				if getConnHandle(vehConn.connectedData, protocol) != nil {
+					vehConn.connectedProtocol = protocol
+					out.Status = SUCCESSFUL
+					return out
+				}
+			}
+		}
+	}
+	out.Error = getErrorObject(400, "invalid_data", "Protocol not connected")
+	out.Status = FAILED
+	return out
+}
+
+func ServiceInquiry(vehicleId VehicleHandle) ServiceInquiryOutput {
+// TODO: getting the relevant metadata from the vehicle about supported services
+	var out ServiceInquiryOutput
+	out.Status = FAILED
+	out.Error = getErrorObject(503, "service_unavailable", "Service not implemented")
+	return out
+}
+
+// ****************** Signal services ***************
+func Set(vehicleId VehicleHandle, path string, value string, stCredentials string) GeneralOutput {
+	vehConn := getVehicleConnection(vehicleId)
+	if vehConn == nil {
+		var out GeneralOutput
+		out.Status = FAILED
+		out.Error = getErrorObject(400, "invalid_data", "Vehicle is not connected")
+		return out
+	}
+	if value == "" {
+		var out GeneralOutput
+		out.Status = FAILED
+		out.Error = getErrorObject(400, "invalid_data", "missing value")
+		return out
+	}
+	stCredParam := ""
+	if stCredentials != "" {
+		stCredParam = `, "authorization":"` + stCredentials + "\""
+	}
+	requestId := generateRandomString()
+	clientMessage := `{"action":"set", "path":"` + path  + `", "value":"` + value + "\"" + stCredParam + `, "requestId":"` + requestId + `"}`
+	responseChan := make(chan map[string]interface{})
+	ok := saveReturnHandle(&vehConn.connectedData, vehConn.connectedProtocol, 0, requestId, responseChan, nil)
+	if !ok {
+		var out GeneralOutput
+		out.Status = FAILED
+		out.Error = getErrorObject(400, "invalid_data", "Vehicle connection is lost")
+		return out
+	}
+	sendMessage(vehConn, clientMessage)
+	var responseMap map[string]interface{}
+	select {
+		case responseMap = <- responseChan:  //wait for response from receiveMessage
+		
+	}
+	return reformatOutput(responseMap, "set").(GeneralOutput)
+}
+
+func Get(vehicleId VehicleHandle, path string, filter string, stCredentials string) GetOutput {
+	vehConn := getVehicleConnection(vehicleId)
+	if vehConn == nil {
+		var out GetOutput
+		out.Status = FAILED
+		out.Error = getErrorObject(400, "invalid_data", "Vehicle is not connected")
+		return out
+	}
+	filterParam := ""
+	if filter != "" {
+		filterParam = `, "filter":` + filter
+	}
+	stCredParam := ""
+	if stCredentials != "" {
+		stCredParam = `, "authorization":"` + stCredentials + "\""
+	}
+	requestId := generateRandomString()
+	clientMessage := `{"action":"get", "path":"` + path + "\"" + filterParam + stCredParam + `, "requestId":"` + requestId + `"}`
+	responseChan := make(chan map[string]interface{})
+	ok := saveReturnHandle(&vehConn.connectedData, vehConn.connectedProtocol, 0, requestId, responseChan, nil)
+	if !ok {
+		var out GetOutput
+		out.Status = FAILED
+		out.Error = getErrorObject(400, "invalid_data", "Vehicle connection is lost")
+		return out
+	}
+	sendMessage(vehConn, clientMessage)
+	var responseMap map[string]interface{}
+	select {
+		case responseMap = <- responseChan:  //wait for response from receiveMessage
+		
+	}
+	return reformatOutput(responseMap, "get").(GetOutput)
+}
+
+func Subscribe(vehicleId VehicleHandle, path string, filter string, stCredentials string, callback func(SubscribeOutput)) SubscribeOutput {
+	serviceId := generateRandomUint32()
+	return subscribeCore(vehicleId, path, filter, stCredentials, serviceId, callback)
+}
+
+func subscribeCore(vehicleId VehicleHandle, path string, filter string, stCredentials string, serviceId uint32, callback func(SubscribeOutput)) SubscribeOutput {
+	vehConn := getVehicleConnection(vehicleId)
+	if vehConn == nil {
+		var out SubscribeOutput
+		out.Status = FAILED
+		out.Error = getErrorObject(400, "invalid_data", "Vehicle is not connected")
+		return out
+	}
+	filterParam := ""
+	if filter != "" {
+		filterParam = `, "filter":` + filter
+	}
+	stCredParam := ""
+	if stCredentials != "" {
+		stCredParam = `, "authorization":"` + stCredentials + "\""
+	}
+	requestId := generateRandomString()
+	clientMessage := `{"action":"subscribe", "path":"` + path + "\"" + filterParam + stCredParam + `, "requestId":"` + requestId + `"}`
+	responseChan := make(chan map[string]interface{})
+	ok := saveReturnHandle(&vehConn.connectedData, vehConn.connectedProtocol, serviceId, requestId, responseChan, callback)
+	if !ok {
+		var out SubscribeOutput
+		out.Status = FAILED
+		out.Error = getErrorObject(400, "invalid_data", "Vehicle connection is lost")
+		return out
+	}
+	sendMessage(vehConn, clientMessage)
+	var responseMap map[string]interface{}
+	select {
+		case responseMap = <- responseChan:  //wait for response from receiveMessage
+		
+	}
+	responseMap["serviceId"] = serviceId
+	return reformatOutput(responseMap, "subscribe").(SubscribeOutput)
+}
+
+func Unsubscribe(vehicleId VehicleHandle, serviceId uint32) GeneralOutput {
+	vehConn := getVehicleConnection(vehicleId)
+	if vehConn == nil {
+		var out GeneralOutput
+		out.Status = FAILED
+		out.Error = getErrorObject(400, "invalid_data", "Vehicle is not connected")
+		return out
+	}
+	subscriptionId := getSubscriptionId(vehConn.connectedData, vehConn.connectedProtocol, serviceId)
+	requestId := generateRandomString()
+	clientMessage := `{"action":"unsubscribe", "subscriptionId":"` + subscriptionId + `", "requestId":"` + requestId + `"}`
+	responseChan := make(chan map[string]interface{})
+	ok := saveReturnHandle(&vehConn.connectedData, vehConn.connectedProtocol, serviceId, requestId, responseChan, nil)
+	if !ok {
+		var out GeneralOutput
+		out.Status = FAILED
+		out.Error = getErrorObject(400, "invalid_data", "Vehicle connection is lost")
+		return out
+	}
+	sendMessage(vehConn, clientMessage)
+	var responseMap map[string]interface{}
+	select {
+		case responseMap = <- responseChan:  //wait for response from receiveMessage
+		
+	}
+	return reformatOutput(responseMap, "unsubscribe").(GeneralOutput)
+}
+
+// ****************** Seat services ***************
+// constants for the different seat movement types
+const (
+	LONGITUDINAL = "longitudinal" //Forward-backward direction of the vehicle
+//	LATERAL = "lateral"           // Left-right direction of the vehicle
+	VERTICAL = "vertical"         // Up-down direction of the vehicle
+	BACKREST = "backrest"         // Seat backrest angular
+	LUMBAR = "lumbar"             // Seat inflate-deflate lumbar
+)
+
+/* constants for asynchronous seat movements; invoke MoveSeat using one of the constants together with its associated movement type,
+*  then terminate the movement by invoking CancelService */
+const (
+	FORWARD = 0            //longitudinal movement
+	BACKWARD = 100         //longitudinal movement
+	UP = 100               //vertical movement
+	DOWN = 0               //vertical movement
+	INFLATE = 100          //lumbar movement
+	DEFLATE = 0            //lumbar movement
+	FORWARD_RECLINE = 0    //backrest movement
+	BACKWARD_RECLINE = 100 //backrest movement
+)
+
+
+type DataPoint struct {
+	Value string
+	Timestamp string
+}
+
+type DataContainer struct {
+	Path string
+	Dp []DataPoint
+}
+
+type GetOutput struct {
+	Status ProcedureStatus
+	Error *ErrorData
+	Data []DataContainer
+}
+
+type SubscribeOutput struct {
+	Status ProcedureStatus
+	Error *ErrorData
+	Data []DataContainer
+	ServiceId uint32
+}
+
+type MoveSeatOutput struct {
+	Status ProcedureStatus
+	Error *ErrorData
+	Position Percentage
+}
+
+type RowDef struct {
+	RowName string
+	ColumnName []string
+}
+
+type RaggedMatrix []RowDef
+
+type GetPropertiesSeatingOutput struct {
+	Status ProcedureStatus
+	Error *ErrorData
+	Id RaggedMatrix
+	Movement []SeatMovementType
+}
+
+type SeatMovementType struct {
+	Name string
+	Description string
+}
+
+func MoveSeat(vehicleId VehicleHandle, seatId MatrixId, movementType string, position Percentage, stCredentials string, callback func(MoveSeatOutput)) MoveSeatOutput {
+	var out MoveSeatOutput
+	var actuatorPath string
+	switch movementType {
+		case LONGITUDINAL:
+			actuatorPath = getSeatPositionedPath("Vehicle.Cabin.Seat.RowX.ColumnY.Position", seatId)
+		case LUMBAR:
+			actuatorPath = getSeatPositionedPath("Vehicle.Cabin.Seat.RowX.ColumnY.Backrest.Lumbar.Height", seatId)
+		default:
+			out.Error = getErrorObject(400, "invalid_data", "unknown movementType")
+			out.Status = FAILED
+			return out
+	}
+	setOut := Set(vehicleId, actuatorPath, strconv.Itoa(int(position)), stCredentials)
+	if setOut.Status == FAILED {
+		out.Status = FAILED
+		out.Error = setOut.Error
+		return out
+	}
+	getOut := Get(vehicleId, actuatorPath, "", stCredentials)
+	if getOut.Status == FAILED {
+		out.Status = FAILED
+		out.Error = getOut.Error
+		return out
+	}
+	currPos, _ := strconv.Atoi(getOut.Data[0].Dp[0].Value)
+	out.Position = Percentage(currPos)
+	out.Status = SUCCESSFUL
+	if callback != nil {
+		serviceId := generateRandomUint32()
+		callbackInterceptor := makeCallbackInterceptor(vehicleId, callback, serviceId, actuatorPath, strconv.Itoa(int(position)))
+		filter := `{"variant":"timebased","parameter":{"period":"500"}}`
+		subOut := subscribeCore(vehicleId, actuatorPath, filter, stCredentials, serviceId, callbackInterceptor)
+		if subOut.Status == SUCCESSFUL {
+			out.Status = ONGOING
+		} else {
+			out.Status = FAILED
+			out.Error = getErrorObject(400, "invalid_data", "callback init failed")
+		}
+	}
+	return out
+}
+
+func GetPropertiesSeating(vehicleId VehicleHandle) GetPropertiesSeatingOutput {
+	var out GetPropertiesSeatingOutput
+	vehConn := getVehicleConnection(vehicleId)
+	if vehConn == nil {
+		out.Error = getErrorObject(400, "invalid_data", "unknown vehicle")
+		out.Status = FAILED
+		return out
+	}
+	if len(vehConn.connectedProtocol) == 0 {
+		out.Error = getErrorObject(400, "invalid_data", "vehicle not connected")
+		out.Status = FAILED
+		return out
+	}
+	out.Status = SUCCESSFUL
+	out.Id = []RowDef{{"Row1", []string{"DriverSide", "PassengerSide"}}, {"Row2", []string{"Couch"}}}
+	out.Movement = []SeatMovementType{{LONGITUDINAL, "Seat movement in the direction parallel to the driving direction"},
+	{VERTICAL, "Seat movement in the vertical direction to the horizontal plane"},
+	{LUMBAR, "Seat movement of the lumbar support"}}
+	return out
+}
+
+// HVAC services
+func hvacService1(vehicleId VehicleHandle) GeneralOutput {
+	var out GeneralOutput
+	vehConn := getVehicleConnection(vehicleId)
+	if vehConn == nil {
+		out.Error = getErrorObject(400, "invalid_data", "Protocol not connected")
+		out.Status = FAILED
+		return out
+	}
+	out.Status = SUCCESSFUL
+	fmt.Printf("hvacService1:succefully called")
+	return out
+}
+
+/****************************** internal functions ************************************************/
+func generateRandomUint32() uint32 {
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
-	return (VehicleHandle)(r.Uint32())
+	return r.Uint32()
 }
 
 func generateRandomString() string {
@@ -366,20 +769,11 @@ func getSubscriptionId(connectedDataList *ConnectedData, protocol string, servic
 	return ""
 }
 
-func saveReturnHandle(connectedDataList **ConnectedData, protocol string, requestId string, responseChan chan map[string]interface{}, callback interface{}) uint32 {
+func saveReturnHandle(connectedDataList **ConnectedData, protocol string, serviceId uint32, requestId string, responseChan chan map[string]interface{}, callback interface{}) bool {
 	if *connectedDataList == nil {
-		return math.MaxUint32
+		return false
 	} else {
 		iterator := connectedDataList
-		var serviceId uint32 = math.MaxUint32
-		if callback != nil {
-			serviceId = uint32(generateRandomUint32())
-			if serviceId == math.MaxUint32 {
-				serviceId--
-			} else if serviceId == 0 {
-				serviceId++
-			}
-		}
 		for *iterator != nil {
 			if (*iterator).protocol == protocol {
 				(*iterator).responseChan = responseChan
@@ -390,7 +784,7 @@ func saveReturnHandle(connectedDataList **ConnectedData, protocol string, reques
 					activeService.serviceId = serviceId
 					activeService.callback = callback
 					*activeServiceIterator = &activeService
-					return serviceId
+					return true
 				}
 				for *activeServiceIterator != nil {
 					if (*activeServiceIterator).next == nil {
@@ -399,7 +793,7 @@ func saveReturnHandle(connectedDataList **ConnectedData, protocol string, reques
 						activeService.serviceId = serviceId
 						activeService.callback = callback
 						(*activeServiceIterator).next = &activeService
-						return serviceId
+						return true
 					}
 					activeServiceIterator = &(*activeServiceIterator).next
 				}
@@ -407,7 +801,7 @@ func saveReturnHandle(connectedDataList **ConnectedData, protocol string, reques
 			iterator = &(*iterator).next
 		}
 	}
-	return 0
+	return false
 }
 
 func getConnHandle(connectedDataList *ConnectedData, protocol string) interface{} {
@@ -709,6 +1103,8 @@ func getCallback(subcriptionId string) interface{} {
 
 func reformatOutput(messageMap map[string]interface{}, outputType string) interface{} {
 	switch outputType {
+		case "set":
+			return reformatGeneralMessage(messageMap)
 		case "get":
 			return reformatGetMessage(messageMap)
 		case "subscribe":
@@ -758,7 +1154,7 @@ func reformatGeneralMessage(messageMap map[string]interface{}) GeneralOutput {
 }
 
 func connectToVehicle(protocol string, socket string) interface{} {
-fmt.Printf("Socket=%s\n", socket)
+//fmt.Printf("Socket=%s\n", socket)
 	if strings.Contains(protocol, "ws") {
 		return initVissV2WebSocket(socket)  // TODO: switch on protocol
 	} else if strings.Contains(protocol, "grpc") {
@@ -767,334 +1163,47 @@ fmt.Printf("Socket=%s\n", socket)
 	return nil
 }
 
-// ****************** Common services ***************
-func GetVehicle(vehicleGuid string) GetVehicleOutput {
-	var vehConn VehicleConnection
-	var out GetVehicleOutput
-	vehConn.vehicleGuid = vehicleGuid
-	vehConn.connectivityData, vehConn.ipAddress = getSupportedConnectivity(vehicleGuid)
-	if vehConn.ipAddress == "" {
-		out.Status = FAILED
-		out.Error = getErrorObject(400, "invalid_data", "unknown vehicle")
-		return out
-	}
-	vehConn.vehicleId = generateRandomUint32()
-	addVehicleConnection(&vehConn)
-	out.VehicleId = vehConn.vehicleId
-	out.Protocol = make([]string, len(vehConn.connectivityData))
-	for i := 0; i< len(vehConn.connectivityData); i++ {
-		out.Protocol[i] = vehConn.connectivityData[i].Protocol
-	}
-	out.Status = SUCCESSFUL
-	if eventChan == nil {
-		eventChan = make(chan map[string]interface{})
-		go eventHandler(eventChan)
-	}
-	return out
+func getSeatPositionedPath(unpositionedPath string, seatId MatrixId) string { // RowX and ColumnY to be replaced
+	index := strings.Index(unpositionedPath, ".RowX.")
+	positionedPath := unpositionedPath[:index+1] + seatId.RowName + unpositionedPath[index+1+4:]
+	index = strings.Index(positionedPath, ".ColumnY.")
+	positionedPath = positionedPath[:index+1] + seatId.ColumnName + positionedPath[index+1+7:]
+	return positionedPath
 }
 
-func ReleaseVehicle(vehicleId VehicleHandle) GeneralOutput {
-	var out GeneralOutput
-	if vehConnList != nil {
-		iterator := &vehConnList
-		for *iterator != nil {
-			if (*iterator).vehicleId == vehicleId {
-				fmt.Printf("Disconnected to vehicle id=%s\n", (*iterator).vehicleGuid)
-				*iterator =(*iterator).next
-				out.Status = SUCCESSFUL
-				return out
-			}
-			iterator = &(*iterator).next
-		}
-	}
-	out.Status = FAILED
-	out.Error = getErrorObject(400, "invalid_data", "unknown vehicle")
-	return out
-}
-
-func Connect(vehicleId VehicleHandle, protocol string, clientCredentials string) ConnectOutput {
-	var out ConnectOutput
-	out.LtCredential = ""  // not implemented
-	out.Status = SUCCESSFUL
-	vehConn := getVehicleConnection(vehicleId)
-	if getConnHandle(vehConn.connectedData, protocol) != nil {
-		return out
-	}
-	matchingIndex := -1
-	for i := 0; i < len(vehConn.connectivityData); i++ {
-		if vehConn.connectivityData[i].Protocol == protocol {
-			matchingIndex = i
-			break
-		}
-	}
-	if matchingIndex >= 0 {
-		var connectedData ConnectedData
-		connectedData.protocol = protocol
-		connectedData.socket = vehConn.ipAddress + ":" + vehConn.connectivityData[matchingIndex].PortNo
-		if strings.Contains(protocol, "mqtt") || strings.Contains(protocol, "MQTT") {
-			connectedData.clientTopic = generateRandomString()  //needed for VISSv3.0-mqtt
-		}
-		connectedData.connHandle = connectToVehicle(protocol, connectedData.socket)
-		if connectedData.connHandle != nil {
-			addConnectedData(&(vehConn.connectedData), &connectedData)
-			vehConn.connectedProtocol = protocol
-			go receiveMessageWs(vehicleId, connectedData.connHandle.(*websocket.Conn), eventChan) //alla protokollen ska ha samma eventChan
-		} else {
-			out.Error = getErrorObject(502, "bad_gateway", "Protocol not supported")
-			out.Status = FAILED
-		}
-	} else {
-		out.Error = getErrorObject(400, "invalid_data", "The upstream server response was invalid")
-		out.Status = FAILED
-	}
-	return out
-}
-
-func Disconnect(vehicleId VehicleHandle, protocol string) GeneralOutput {
-	var out GeneralOutput
-	vehConn := getVehicleConnection(vehicleId)
-	if vehConn == nil {
-		out.Error = getErrorObject(400, "invalid_data", "Protocol not connected")
-		out.Status = FAILED
-		return out
-	}
-	// TODO: gör unsubscribe på activa services??
-	switch protocol {
-		case "VISSv3.0-wss": fallthrough
-		case "VISSv3.0-ws":
-			getConnHandle(vehConn.connectedData, protocol).(*websocket.Conn).Close()
-		default:
-			fmt.Printf("Disconnect: protocol not supported\n")
-			out.Error = getErrorObject(400, "invalid_data", "Protocol not supported")
-			out.Status = FAILED
-			return out
-	}
-	responseChan := getResponseChan(vehConn.connectedData, protocol)
-	m := make(map[string]interface{})
-	m["error"] = "terminate"   // not read by receiveMessageXX anyway ...
-	responseChan <- m
-	removeConnection(&vehConn, protocol)
-	out.Status = SUCCESSFUL
-	return out
-}
-
-func SelectProtocol(vehicleId VehicleHandle, protocol string) GeneralOutput {
-	var out GeneralOutput
-	vehConn := getVehicleConnection(vehicleId)
-	if vehConn != nil {
-		for i := 0; i<len(vehConn.connectivityData); i++ {
-			if vehConn.connectivityData[i].Protocol == protocol {
-				if getConnHandle(vehConn.connectedData, protocol) != nil {
-					vehConn.connectedProtocol = protocol
-					out.Status = SUCCESSFUL
-					return out
+func makeCallbackInterceptor(vehicleId VehicleHandle, callback interface{}, serviceId uint32, path string, finalValue string) func(SubscribeOutput) {
+	return func(subOut SubscribeOutput) {
+		var status ProcedureStatus
+		var errorData *ErrorData
+		var dataIndex int
+		if subOut.Status == SUCCESSFUL {
+			status = ONGOING
+			for i := 0; i < len(subOut.Data); i++ {
+				if subOut.Data[i].Path == path {
+					dataIndex = i
+					if subOut.Data[i].Dp[0].Value == finalValue {
+						status = SUCCESSFUL
+						Unsubscribe(vehicleId, serviceId)
+						break
+					}
 				}
 			}
+		} else {
+			status = FAILED
+			errorData = subOut.Error
+			Unsubscribe(vehicleId, serviceId)
+		}
+		switch callback.(type) {
+			case func(MoveSeatOutput):
+				var out MoveSeatOutput
+				out.Status = status
+				out.Error = errorData
+				if status != FAILED {
+					position, _ := strconv.Atoi(subOut.Data[dataIndex].Dp[0].Value)
+					out.Position = Percentage(position)
+				}
+				callback.(func(MoveSeatOutput))(out)
 		}
 	}
-	out.Error = getErrorObject(400, "invalid_data", "Protocol not connected")
-	out.Status = FAILED
-	return out
 }
 
-func ServiceInquiry(vehicleId VehicleHandle) ServiceInquiryOutput {
-// TODO: getting the relevant metadata from the vehicle about supported services
-	var out ServiceInquiryOutput
-	out.Status = FAILED
-	out.Error = getErrorObject(503, "service_unavailable", "Service not implemented")
-	return out
-}
-
-// ****************** Signal services ***************
-func Get(vehicleId VehicleHandle, path string, filter string, stCredentials string) GetOutput {
-	vehConn := getVehicleConnection(vehicleId)
-	if vehConn == nil {
-		var out GetOutput
-		out.Status = FAILED
-		out.Error = getErrorObject(400, "invalid_data", "Vehicle is not connected")
-		return out
-	}
-	filterParam := ""
-	if filter != "" {
-		filterParam = `, "filter":` + filter
-	}
-	stCredParam := ""
-	if stCredentials != "" {
-		stCredParam = `, "authorization":"` + stCredentials + "\""
-	}
-	requestId := generateRandomString()
-	clientMessage := `{"action":"get", "path":"` + path + "\"" + filterParam + stCredParam + `, "requestId":"` + requestId + `"}`
-	responseChan := make(chan map[string]interface{})
-	serviceId := saveReturnHandle(&vehConn.connectedData, vehConn.connectedProtocol, requestId, responseChan, nil)
-	if serviceId == math.MaxUint32 {
-		var out GetOutput
-		out.Status = FAILED
-		out.Error = getErrorObject(400, "invalid_data", "Vehicle is not connected")
-		return out
-	}
-	sendMessage(vehConn, clientMessage)
-	var responseMap map[string]interface{}
-	select {
-		case responseMap = <- responseChan:  //wait for response from receiveMessage
-		
-	}
-	return reformatOutput(responseMap, "get").(GetOutput)
-}
-
-func Subscribe(vehicleId VehicleHandle, path string, filter string, stCredentials string, callback func(SubscribeOutput)) SubscribeOutput {
-	vehConn := getVehicleConnection(vehicleId)
-	if vehConn == nil {
-		var out SubscribeOutput
-		out.Status = FAILED
-		out.Error = getErrorObject(400, "invalid_data", "Vehicle is not connected")
-		return out
-	}
-	filterParam := ""
-	if filter != "" {
-		filterParam = `, "filter":` + filter
-	}
-	stCredParam := ""
-	if stCredentials != "" {
-		stCredParam = `, "authorization":"` + stCredentials + "\""
-	}
-	requestId := generateRandomString()
-	clientMessage := `{"action":"subscribe", "path":"` + path + "\"" + filterParam + stCredParam + `, "requestId":"` + requestId + `"}`
-	responseChan := make(chan map[string]interface{})
-	serviceId := saveReturnHandle(&vehConn.connectedData, vehConn.connectedProtocol, requestId, responseChan, callback)
-	sendMessage(vehConn, clientMessage)
-	var responseMap map[string]interface{}
-	select {
-		case responseMap = <- responseChan:  //wait for response from receiveMessage
-		
-	}
-	responseMap["serviceId"] = serviceId
-	return reformatOutput(responseMap, "subscribe").(SubscribeOutput)
-}
-
-func Unsubscribe(vehicleId VehicleHandle, serviceId uint32) GeneralOutput {
-	vehConn := getVehicleConnection(vehicleId)
-	if vehConn == nil {
-		var out GeneralOutput
-		out.Status = FAILED
-		out.Error = getErrorObject(400, "invalid_data", "Vehicle is not connected")
-		return out
-	}
-	subscriptionId := getSubscriptionId(vehConn.connectedData, vehConn.connectedProtocol, serviceId)
-	requestId := generateRandomString()
-	clientMessage := `{"action":"unsubscribe", "subscriptionId":"` + subscriptionId + `", "requestId":"` + requestId + `"}`
-	responseChan := make(chan map[string]interface{})
-	saveReturnHandle(&vehConn.connectedData, vehConn.connectedProtocol, requestId, responseChan, nil)
-	sendMessage(vehConn, clientMessage)
-	var responseMap map[string]interface{}
-	select {
-		case responseMap = <- responseChan:  //wait for response from receiveMessage
-		
-	}
-	//  getConnHandle(vehConn.connectedData, protocol).(*websocket.Conn).Close() ??? jmf Disconnect
-	return reformatOutput(responseMap, "unsubscribe").(GeneralOutput)
-}
-
-// ****************** Seat services ***************
-type DirectionType uint8
-const (
-	Longitudal = iota  //Forward-backward direction of the vehicle; 0=forward-most, 100=backward-most
-	Lateral            // Left-right direction of the vehicle; 0=left-most, 100=right-most
-	Vertical           // Up-down direction of the vehicle; 0=down-most, 100=up-most
-	Tilt               // Seat forward-backward tilt; 0=forward-tilt-most, 100=backward-tilt-most
-	Lumbar             // Seat increase-decrease lumbar; 0=decrease-most, 100=increase-most
-)
-
-//Asynchronous move is realized by setting the position to DIRECTION_MAX or DIRECTION_MIN and then cancel the service asynchronously
-const (
-	DIRECTION_MAX = 100
-	DIRECTION_MIN = 0
-)
-
-type DataPoint struct {
-	Value string
-	Timestamp string
-}
-
-type DataContainer struct {
-	Path string
-	Dp []DataPoint
-}
-
-type GetOutput struct {
-	Status ProcedureStatus
-	Error *ErrorData
-	Data []DataContainer
-}
-
-type SubscribeOutput struct {
-	Status ProcedureStatus
-	Error *ErrorData
-	Data []DataContainer
-	ServiceId uint32
-}
-
-type MoveSeatOutput struct {
-	Status ProcedureStatus
-	Error *ErrorData
-	Position Percentage
-}
-
-type RowDef struct {
-	RowName string
-	ColumnName []string
-}
-
-type RaggedMatrix []RowDef
-
-type GetPropertiesSeatingOutput struct {
-	Status ProcedureStatus
-	Error *ErrorData
-	Id RaggedMatrix
-	Movement []SeatMovementType
-}
-
-type SeatMovementType struct {
-	Name string
-	Description string
-}
-
-func MoveSeat(vehicleId VehicleHandle, seatId MatrixId, movementType string, position Percentage, stCredentials string, callback func(MoveSeatOutput)) MoveSeatOutput {
-	var out MoveSeatOutput
-	out.Status = SUCCESSFUL
-	out.Position = 50
-	return out
-}
-
-func GetPropertiesSeating(vehicleId VehicleHandle) GetPropertiesSeatingOutput {
-	var out GetPropertiesSeatingOutput
-	vehConn := getVehicleConnection(vehicleId)
-	if vehConn == nil {
-		out.Error = getErrorObject(400, "invalid_data", "unknown vehicle")
-		out.Status = FAILED
-		return out
-	}
-	if len(vehConn.connectedProtocol) == 0 {
-		out.Error = getErrorObject(400, "invalid_data", "vehicle not connected")
-		out.Status = FAILED
-		return out
-	}
-	out.Status = SUCCESSFUL
-	out.Id = []RowDef{{"Row1", []string{"Left", "Right"}}, {"Row2", []string{"Couch"}}}
-	out.Movement = []SeatMovementType{{"longitudinal", "Seat movement in the direction parallel to the driving direction"},
-	{"lateral", "Seat movement in the direction anti-parallel to the driving direction, in the horizontal plane"}}
-	return out
-}
-
-// HVAC services
-func hvacService1(vehicleId VehicleHandle) GeneralOutput {
-	var out GeneralOutput
-	vehConn := getVehicleConnection(vehicleId)
-	if vehConn == nil {
-		out.Error = getErrorObject(400, "invalid_data", "Protocol not connected")
-		out.Status = FAILED
-		return out
-	}
-	out.Status = SUCCESSFUL
-	fmt.Printf("hvacService1:succefully called")
-	return out
-}
