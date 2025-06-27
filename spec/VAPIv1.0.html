@@ -796,9 +796,72 @@
 
       <section id="set-procedure">
         <h2>Set</h2>
+        <p>Set the value of a signal.</p>
+
         <p>
-        xxx
+        This procedure changes the state of the actuator so that its associated signal becomes set to the value provided.
+        This change may be instantaneous or it may take an undefined period of time.
+        In the latter case the returned Status only represent the outcome of providing the value to the underlying vehicle system.
         </p>
+
+        <section id="set-signature">
+          <h2>Signature</h2>
+          <pre><code>Set(vehicleId: uint32, path: string, value: string, stCredentials: string): GeneralOutput</code></pre>
+        </section>
+
+        <section id="set-parameters">
+          <h2>Parameters</h2>
+          <ul class="param-list">
+            <li>
+              <strong>vehicleId</strong> (<span class="type">uint32</span>)
+              <br>
+              A reference to the vehicle that was obtained in a previous <a href="#getvehicle-procedure">GetVehicle</a>.
+            </li>
+            <li>
+              <strong>path</strong> (<span class="type">string</span>)
+              <br>
+              The path must follow the syntax described in HIM. It must address a leaf node in the HIM defined tree, unless there is also an input filter parameter.
+            </li>
+            <li>
+              <strong>value</strong> (<span class="type">string</span>)
+              <br>
+              The value that the signal shall become set to. Regardless of datatype the value is represented in string format.
+            </li>
+            <li>
+              <strong>stCredentials</strong> (<span class="type">string</span>)
+              <br>
+              The short term credentials that was obtained by a call to <a href="#get-st-credentials-procedure">GetStCredentials</a>.
+            </li>
+          </ul>
+        </section>
+
+        <section id="set-returns">
+          <h2>Returns</h2>
+            <span class="type"><code>GeneralOutput</code></span>
+            <br>
+            A struct containing the output data from the Set procedure.
+            <pre><code>
+            {
+              Status: ProcedureStatus,
+              Error: *ErrorData
+            }
+            </code></pre>
+            Struct member descriptions:<br>
+            <a href="#procedure-status">Status: </a>The status of the latest service call to it.<br>
+            <a href="#error-data">Error: </a>Error information for the latest service call, if error occurred.
+        </section>
+
+        <section id="get-error">
+          <h2>Error</h2>
+          <ul class="error-list">
+            <li>
+            If Status is set to FAILED then Error must be available and populated with error data, else the pointer to Error shall be set to nil.
+            </li>
+            <li>
+            Error data shall conform to the error data definitions in [[VISS]] for signals.
+            </li>
+          </ul>
+        </section>
       </section>
 
       <section id="subscribe-procedure">
@@ -889,9 +952,60 @@
 
       <section id="unsubscribe-procedure">
         <h2>Unsubscribe</h2>
-        <p>
-        xxxx
+        <p>Unsubscribe to an ongoing subscription session.</p>
+
+        <p>This procedure unsubscribes to an ongoing subscription session, leading to the termination of the session.<br>
+        This procedure supports multiple execution instances.
         </p>
+
+        <section id="unsubscribe-signature">
+          <h2>Signature</h2>
+          <pre><code>Unsubscribe(vehicleId: uint32, serviceId: uint32): GeneralOutput</code></pre>
+        </section>
+
+        <section id="unsubscribe-parameters">
+          <h2>Parameters</h2>
+          <ul class="param-list">
+            <li>
+              <strong>vehicleId</strong> (<span class="type">uint32</span>)
+              <br>
+              A reference to the vehicle that was obtained in a previous <a href="#getvehicle-procedure">GetVehicle</a>.
+            </li>
+            <li>
+              <strong>serviceId</strong> (<span class="type">uint32</span>)
+              <br>
+              The serviceId was received in the previous Subscribe response.
+            </li>
+          </ul>
+        </section>
+
+        <section id="unsubscribe-returns">
+          <h2>Returns</h2>
+            <span class="type"><code>GeneralOutput</code></span>
+            <br>
+            A struct containing the output data from the Unsubscribe procedure.
+            <pre><code>
+            {
+              Status: ProcedureStatus,
+              Error: *ErrorData
+            }
+            </code></pre>
+            Struct member descriptions:<br>
+            <a href="#procedure-status">Status: </a>The status of the latest service call to it.<br>
+            <a href="#error-data">Error: </a>Error information for the latest service call, if error occurred.
+        </section>
+
+        <section id="unsubscribe-error">
+          <h2>Error</h2>
+          <ul class="error-list">
+            <li>
+            If Status is set to FAILED then Error must be available and populated with error data, else the pointer to Error shall be set to nil.
+            </li>
+            <li>
+            Error data shall conform to the error data definitions in [[VISS]] for signals.
+            </li>
+          </ul>
+        </section>
       </section>
     </section>
     </section>
@@ -993,6 +1107,7 @@
         It supports "synchronous" movement to any position provided as input to the service, 
         and also "asynchronous" movement where the client terminates the service execution by invokation of <a href="#cancel-service-procedure">CancelService</a>.
         In the asynchronous scenario the provided input to the service is typically one of the position range end points (zero or hundred percent).
+        Constants are defined to represent movement directions for the different movement types.
         </p>
 
         <section id="move-seat-signature">
@@ -1286,6 +1401,39 @@
             Input: string,
             Output: string
         }
+        </code></pre>
+      </section>
+
+    </section>
+
+    <section id="constant-definition">
+      <h2>Constants</h2>
+
+      <section id="movement-types">
+        <h2>Movement Types</h2>
+        <pre><code>
+	const (
+		LONGITUDINAL = "longitudinal" //Forward-backward direction of the vehicle
+		VERTICAL = "vertical"         // Up-down direction of the vehicle
+		BACKREST = "backrest"         // Seat backrest angular
+		LUMBAR = "lumbar"             // Seat inflate-deflate lumbar
+	)
+        </code></pre>
+      </section>
+
+      <section id="movement-directions">
+        <h2>Movement Directions</h2>
+        <pre><code>
+	const (
+		FORWARD = 0            //longitudinal movement
+		BACKWARD = 100         //longitudinal movement
+		UP = 100               //vertical movement
+		DOWN = 0               //vertical movement
+		INFLATE = 100          //lumbar movement
+		DEFLATE = 0            //lumbar movement
+		FORWARD_RECLINE = 0    //backrest movement
+		BACKWARD_RECLINE = 100 //backrest movement
+	)
         </code></pre>
       </section>
 

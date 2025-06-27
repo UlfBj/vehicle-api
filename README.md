@@ -61,6 +61,17 @@ A rendered version of the VAPIv1.0 specification is found on this link:
 
 https://raw.githack.com/UlfBj/vehicle-api/main/spec/VAPIv1.0.html
 
+## Quickstart
+A VAPI demo using the VAPI-VISS implementation is available in the impl/VISS-Go directory.
+The following steps will run it:
+1. Clone the VISSR repo.
+2. In the VISSR root directory, issue the command: $ ./runstack.sh startme
+3. In the VAPI impl/VISS-Go directory, build the VAPI demo by issuing the command: $ go build -o vapitest.
+4. Start the demo by issuing the command: ./vapitest
+
+The VISSR server is assumed to run on the same localhost IP address as the VAPI client demo.
+If not the method getSupportedConnectivity() in VapiViss.go must be updated with the IP address of the VISSR server.
+
 ## Contributors
 VAPI is an open standard and we invite anybody to contribute. Currently VAPI contains - among others - significant  contributions from
 
