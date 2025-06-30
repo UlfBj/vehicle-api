@@ -87,10 +87,10 @@
   <body>
     <section id='abstract'>
       <p>
-        The Vehicle API (VAPI) specification defines an interface for access to vehicle signals and services.
+        The Vehicle API (VAPI) specification defines an interface for access to vehicle data and services.
         This access is realized by exposing a procedure-based interface to clients of it.
         For vehicle services there i a one-to-one mapping between a service and a procedure.
-        For signals there are a set of reserved procedure signatures that are used to realize the signal access.
+        For data there are a set of reserved procedure signatures that are used to realize the data access.
         This specification is agnostic to the connectivity solution that is used in implementations of it.
         A client may be deployed in-vehicle, but may also be deployed off-vehicle.
         These details are abstracted in the interface and dealt with in the implementation of the interface.
@@ -100,7 +100,7 @@
     <section id="introduction">
       <h2>Introduction</h2>
       <p>
-      This specification defines an interface for access to vehicle signals and services.
+      This specification defines an interface for access to vehicle d and services.
       </p>
     </section>
 
@@ -124,16 +124,18 @@
     <section id="vapi-overview">
       <h2>VAPI Overview</h2>
       <p>
-        VAPI procedures are characterized as belonging to one of the types Common, Signal, or Service.
+        VAPI procedures are characterized as belonging to one of the groups Common, Data, or Service.
       <ul>
           <li>
-            The Common type contains the procedures that common to both signal and service access.
+            The Common group contains the procedures that common to both data and service access.
           </li>
           <li>
-            The Signal type contains the procedures that a client may use for access to vehicle signals.
+            The Data group contains the procedures that a client may use for access to vehicle signals.
+            The term vehicle signal is an automotive legacy term having the same meaning as vehicle data.
+            The two terms are both used in this specification, denoting the same thing.
           </li>
           <li>
-            The Service type contains the procedures that a client may use for access to vehicle services.
+            The Service group contains the procedures that a client may use for access to vehicle services.
           </li>
       </ul>
       <strong>Procedure characteristics:</strong>
@@ -173,6 +175,12 @@
         Procedures calls are agnostic to which transport protocol that is used.
         If a session-based protocol is used then a successful <a href="#connect-procedure">Connect</a> call must have preceeded this call.
         </li>
+        <li>
+        Service group procedures that are called with a defined callback may be implemented to automatically terminate the callback session when
+        the service is successfully terminated, or if an error occurs. If they do not implement such a behavior it is the responsibility of the caller
+        to handle the callback session termination by calling the <a href="#cancel-service-procedure">CancelService</a> procedure.
+        The service documentation shall describe how it handles callback sessions.
+        </li>
       </ul>
       </p>
     </section>
@@ -180,31 +188,9 @@
     <section id="common-procedures">
       <h2>Common Procedures</h2>
       <p>
-      The common procedures provide the following services.
+      The common procedures are used for common tasks that are not related specifically to either the data or the service groups.
       </p>
-      <ul>
-        <li>
-        <a href="#getvehicle-procedure">Initiate a connection session to a vehicle</a>.
-        </li>
-        <li>
-        <a href="#connect-procedure">Connect for a session with a vehicle</a>.
-        </li>
-        <li>
-        <a href="#service-inquiry-procedure">Inquire a vehicle about the services it supports</a>.
-        </li>
-        <li>
-        <a href="#disconnect-procedure">Terminate the connection session to a vehicle</a>.
-        </li>
-        <li>
-        <a href="#cancel-service-procedure">Cancel an ongoing procedure execution</a>.
-        </li>
-        <li>
-        <a href="#get-st-credentials-procedure">Request for short term credentials</a>.
-        </li>
-        <li>
-        <a href="#invoke-procedure">Invoke a service that is not part of the VAPI specification</a>.
-        </li>
-      </ul>
+
       <section id="getvehicle-procedure">
         <h2>GetVehicle</h2>
         <p>Provides a vehicle reference and connectivity info for a specified vehicle.</p>
@@ -317,7 +303,7 @@
             <li>
               <strong>clientCredentials</strong> (<span class="type">string</span>)
               <br>
-              Access to the vehicle services or signals might require that a credential is present, e .g. a certificate.
+              Access to the vehicle services or data might require that a credential is present, e .g. a certificate.
               How the client obtains this credential is out-of-scope for this specification,
               as well as what is required of it to become verified successfully.
               This information may be available in the context of the implemented connectivity solution.
@@ -374,14 +360,144 @@
 
       <section id="disconnect-procedure">
         <h2>Disconnect</h2>
+        <p>Disconnects a vehicle communication session.</p>
+
+        <p>
+        This procedure terminates a vehicle communication session for a specified protocol.
+        If communication sessions over other protocols are ongoing, these are unaffected by the call.
+        </p>
+
+        <section id="disconnect-signature">
+          <h2>Signature</h2>
+          <pre><code>Disconnect(vehicleId: uint32, protocol: string): GeneralOutput</code></pre>
+        </section>
+
+        <section id="disconnect-parameters">
+          <h2>Parameters</h2>
+          <ul class="param-list">
+            <li>
+              <strong>vehicleId</strong> (<span class="type">uint32</span>)
+              <br>
+              A reference to the vehicle that was obtained in a previous <a href="#getvehicle-procedure">GetVehicle</a>.
+            </li>
+            <li>
+              <strong>protocol</strong> (<span class="type">string</span>)
+              <br>
+              The protocol name of an ongoing communication session.
+            </li>
+          </ul>
+        </section>
+
+        <section id="disconnect-returns">
+          <h2>Returns</h2>
+            <span class="type"><code>GeneralOutput</code></span>
+            <br>
+            A struct containing the output data from the Disconnect procedure.
+            <pre><code>
+            {
+              Status: ProcedureStatus,
+              Error: *ErrorData
+            }
+            </code></pre>
+            Struct member descriptions:<br>
+            <a href="#procedure-status">Status: </a>The status of the latest service call to it.<br>
+            <a href="#error-data">Error: </a>Error information for the latest service call, if error occurred.
+        </section>
       </section>
 
       <section id="select-protocol-procedure">
         <h2>SelectProtocol</h2>
+        <p>Selects the default protocol.</p>
+
+        <p>
+        This procedure selects which protocol that shall be the default protocol,
+        i. e. the protocol that VAPI procedures that involve sending requests to the vehicle will then use.
+        A successful <a href="#connect-procedure">Connect</a> call for the protocol must have preceeded the SelectProtocol call.
+        </p>
+
+        <section id="select-protocol-signature">
+          <h2>Signature</h2>
+          <pre><code>SelectProtocol(vehicleId: uint32, protocol: string): GeneralOutput</code></pre>
+        </section>
+
+        <section id="select-protocol-parameters">
+          <h2>Parameters</h2>
+          <ul class="param-list">
+            <li>
+              <strong>vehicleId</strong> (<span class="type">uint32</span>)
+              <br>
+              A reference to the vehicle that was obtained in a previous <a href="#getvehicle-procedure">GetVehicle</a>.
+            </li>
+            <li>
+              <strong>protocol</strong> (<span class="type">string</span>)
+              <br>
+              The protocol name. This was typically obtained in a previous <a href="#getvehicle-procedure">GetVehicle</a> call.
+            </li>
+          </ul>
+        </section>
+
+        <section id="select-protocol-returns">
+          <h2>Returns</h2>
+            <span class="type"><code>GeneralOutput</code></span>
+            <br>
+            A struct containing the output data from the SelectProtocol procedure.
+            <pre><code>
+            {
+              Status: ProcedureStatus,
+              Error: *ErrorData
+            }
+            </code></pre>
+            Struct member descriptions:<br>
+            <a href="#procedure-status">Status: </a>The status of the latest service call to it.<br>
+            <a href="#error-data">Error: </a>Error information for the latest service call, if error occurred.
+        </section>
       </section>
 
       <section id="cancel-service-procedure">
         <h2>CancelService</h2>
+        <p>Cancels on ongoing service.</p>
+
+        <p>
+        This procedure terminates an ongoing service call associated with the provided serviceId.
+        The service is terminated successfully in its current state, unless the underlying vehicle system responds to this state as an error.
+        </p>
+
+        <section id="cancel-service-signature">
+          <h2>Signature</h2>
+          <pre><code>CancelService(vehicleId: uint32, serviceId: uint23): GeneralOutput</code></pre>
+        </section>
+
+        <section id="cancel-service-parameters">
+          <h2>Parameters</h2>
+          <ul class="param-list">
+            <li>
+              <strong>vehicleId</strong> (<span class="type">uint32</span>)
+              <br>
+              A reference to the vehicle that was obtained in a previous <a href="#getvehicle-procedure">GetVehicle</a> call.
+            </li>
+            <li>
+              <strong>serviceId</strong> (<span class="type">uint32</span>)
+              <br>
+              The serviceId was received in a previous response from a service call.
+            </li>
+          </ul>
+        </section>
+
+        <section id="cancel-service-returns">
+          <h2>Returns</h2>
+            <span class="type"><code>GeneralOutput</code></span>
+            <br>
+            A struct containing the output data from the CancelService procedure.
+            <pre><code>
+            {
+              Status: ProcedureStatus,
+              Error: *ErrorData
+            }
+            </code></pre>
+            Struct member descriptions:<br>
+            <a href="#procedure-status">Status: </a>The status of the latest service call to it.<br>
+            <a href="#error-data">Error: </a>Error information for the latest service call, if error occurred.
+        </section>
       </section>
 
       <section id="service-inquiry-procedure">
@@ -713,10 +829,24 @@
 
     </section>
 
-    <section id="signal-procedures">
-      <h2>Signal Procedures</h2>
+    <section id="data-procedures">
+      <h2>Data Procedures</h2>
       <p>
-      xxx
+      The data procedures provide access to vehicle signals using a "service agnostic" API consisting of the procedures:
+      <ul>
+        <li>
+         Get
+        </li>
+        <li>
+         Set
+        </li>
+        <li>
+         Subscribe
+        </li>
+        <li>
+         Unsubscribe
+        </li>
+      </ul>
       </p>
 
       <section id="get-procedure">
@@ -775,7 +905,7 @@
             Struct member descriptions:<br>
             <a href="#procedure-status">Status: </a>The status of the latest service call to it.<br>
             <a href="#error-data">Error: </a>Error information for the latest service call, if error occurred.<br>
-            <a href="#data-container">Data: </a>The requested signal data.
+            <a href="#data-container">Data: </a>The requested data.
         </section>
 
         <section id="get-error">
@@ -870,7 +1000,8 @@
 
         <p>
         Subscribe initiates a session in which the values of one or more signals are asynchronously returned depending on the event trigger condition.
-        It is possible to reference multiple signals in one call.
+        It is possible to reference multiple signals in one call.<br>
+        The subscription session will continue until either an <a href="#unsubscribe-procedure">Unsubscribe</a> call is issued, or that an error occurs.
         </p>
 
         <section id="subscribe-signature">
@@ -884,7 +1015,7 @@
             <li>
               <strong>vehicleId</strong> (<span class="type">uint32</span>)
               <br>
-              A reference to the vehicle that was obtained in a previous <a href="#getvehicle-procedure">GetVehicle</a>.
+              A reference to the vehicle that was obtained in a previous <a href="#getvehicle-procedure">GetVehicle</a> call.
             </li>
             <li>
               <strong>path</strong> (<span class="type">string</span>)
@@ -928,7 +1059,7 @@
             Struct member descriptions:<br>
             <a href="#procedure-status">Status: </a>The status of the latest service call to it.<br>
             <a href="#error-data">Error: </a>Error information for the latest service call, if error occurred.<br>
-            <a href="#data-container">Data: </a>The requested signal data.<br>
+            <a href="#data-container">Data: </a>The requested data.<br>
             ServiceId: A reference to the service session that the client may use to call <a href="#cancel-service-procedure">CancelService</a>.
             It may be set to zero in which case it is invalid.
 
@@ -1108,6 +1239,8 @@
         and also "asynchronous" movement where the client terminates the service execution by invokation of <a href="#cancel-service-procedure">CancelService</a>.
         In the asynchronous scenario the provided input to the service is typically one of the position range end points (zero or hundred percent).
         Constants are defined to represent movement directions for the different movement types.
+        The service will automatically terminate an ongoing callback session when either the vehicle signal representing the movement reaches the
+        position provided in the input, or if an error occurs.
         </p>
 
         <section id="move-seat-signature">
@@ -1258,7 +1391,7 @@
 
       <section id="data-container">
         <h2>DataContainer</h2>
-        A struct containing the path of a signal and one or more data points for the signal.
+        A struct containing the path of a signal and one or more data points of the signal.
         <pre><code>
         struct {
             Path: string,
