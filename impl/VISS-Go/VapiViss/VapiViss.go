@@ -110,6 +110,25 @@ type ServiceInquiryOutput struct {
 	Service []ServiceSignature
 }
 
+type GetStCredentialsOutput struct {
+	Status ProcedureStatus
+	Error *ErrorData
+	StCredentials string
+}
+
+type InvokeOutput struct {
+	Status ProcedureStatus
+	Error *ErrorData
+	ServiceOutput string
+	ServiceId uint32
+}
+
+type GetMetadataOutput struct {
+	Status ProcedureStatus
+	Error *ErrorData
+	Metadata string
+}
+
 type GeneralOutput struct {
 	Status ProcedureStatus
 	Error *ErrorData
@@ -245,9 +264,57 @@ func SelectProtocol(vehicleId VehicleHandle, protocol string) GeneralOutput {
 	return out
 }
 
+func GetMetadata(vehicleId VehicleHandle, path string, stCredentials string) GetMetadataOutput {
+	vehConn := getVehicleConnection(vehicleId)
+	if vehConn == nil {
+		var out GetMetadataOutput
+		out.Status = FAILED
+		out.Error = getErrorObject(400, "invalid_data", "Vehicle is not connected")
+		return out
+	}
+	filterParam := `", "filter": {"variant":"metadata", "parameter":"0"}`
+	stCredParam := ""
+	if stCredentials != "" {
+		stCredParam = `, "authorization":"` + stCredentials + "\""
+	}
+	requestId := generateRandomString()
+	clientMessage := `{"action":"get", "path":"` + path + filterParam + stCredParam + `, "requestId":"` + requestId + `"}`
+	responseChan := make(chan map[string]interface{})
+	ok := saveReturnHandle(&vehConn.connectedData, vehConn.connectedProtocol, 0, requestId, responseChan, nil)
+	if !ok {
+		var out GetMetadataOutput
+		out.Status = FAILED
+		out.Error = getErrorObject(400, "invalid_data", "Vehicle connection is lost")
+		return out
+	}
+	sendMessage(vehConn, clientMessage)
+	var responseMap map[string]interface{}
+	select {
+		case responseMap = <- responseChan:  //wait for response from receiveMessage
+		
+	}
+	return reformatOutput(responseMap, "getmetadata").(GetMetadataOutput)
+}
+
 func ServiceInquiry(vehicleId VehicleHandle) ServiceInquiryOutput {
 // TODO: getting the relevant metadata from the vehicle about supported services
 	var out ServiceInquiryOutput
+	out.Status = FAILED
+	out.Error = getErrorObject(503, "service_unavailable", "Service not implemented")
+	return out
+}
+
+func Invoke(vehicleId VehicleHandle, serviceName string, procedureInput string, stCredentials string, callback func(InvokeOutput)) InvokeOutput {
+// TODO: invoking the named service
+	var out InvokeOutput
+	out.Status = FAILED
+	out.Error = getErrorObject(503, "service_unavailable", "Service not implemented")
+	return out
+}
+
+func GetStCredentials(vehicleId VehicleHandle, ltCredentials string, purpose string) GetStCredentialsOutput {
+// TODO: calling a authorization sever to get short-term credentials
+	var out GetStCredentialsOutput
 	out.Status = FAILED
 	out.Error = getErrorObject(503, "service_unavailable", "Service not implemented")
 	return out
@@ -393,6 +460,34 @@ func Unsubscribe(vehicleId VehicleHandle, serviceId uint32) GeneralOutput {
 		
 	}
 	return reformatOutput(responseMap, "unsubscribe").(GeneralOutput)
+}
+
+func CancelService(vehicleId VehicleHandle, serviceId uint32) GeneralOutput {
+	vehConn := getVehicleConnection(vehicleId)
+	if vehConn == nil {
+		var out GeneralOutput
+		out.Status = FAILED
+		out.Error = getErrorObject(400, "invalid_data", "Vehicle is not connected")
+		return out
+	}
+	subscriptionId := getSubscriptionId(vehConn.connectedData, vehConn.connectedProtocol, serviceId)
+	requestId := generateRandomString()
+	clientMessage := `{"action":"unsubscribe", "subscriptionId":"` + subscriptionId + `", "requestId":"` + requestId + `"}`
+	responseChan := make(chan map[string]interface{})
+	ok := saveReturnHandle(&vehConn.connectedData, vehConn.connectedProtocol, serviceId, requestId, responseChan, nil)
+	if !ok {
+		var out GeneralOutput
+		out.Status = FAILED
+		out.Error = getErrorObject(400, "invalid_data", "Vehicle connection is lost")
+		return out
+	}
+	sendMessage(vehConn, clientMessage)
+	var responseMap map[string]interface{}
+	select {
+		case responseMap = <- responseChan:  //wait for response from receiveMessage
+		
+	}
+	return reformatOutput(responseMap, "cancelservice").(GeneralOutput)
 }
 
 // ****************** Seat services ***************
@@ -1107,9 +1202,12 @@ func reformatOutput(messageMap map[string]interface{}, outputType string) interf
 			return reformatGeneralMessage(messageMap)
 		case "get":
 			return reformatGetMessage(messageMap)
+		case "getmetadata":
+			return reformatGetMetadataMessage(messageMap)
 		case "subscribe":
 			return reformatSubscribeMessage(messageMap)
-		case "unsubscribe":
+		case "unsubscribe": fallthrough
+		case "cancelservice":
 			return reformatGeneralMessage(messageMap)
 	}
 	return nil
@@ -1123,6 +1221,18 @@ func reformatGetMessage(messageMap map[string]interface{}) GetOutput {
 	} else {
 		out.Status = SUCCESSFUL
 		out.Data = populateData(messageMap["data"])
+	}
+	return out
+}
+
+func reformatGetMetadataMessage(messageMap map[string]interface{}) GetMetadataOutput {
+	var out GetMetadataOutput
+	if messageMap["error"] != nil {
+		out.Status = FAILED
+		out.Error = getErrorInfo(messageMap["error"].(map[string]interface{}))
+	} else {
+		out.Status = SUCCESSFUL
+		out.Metadata = messageMap["metadata"].(string)
 	}
 	return out
 }

@@ -25,11 +25,16 @@ The logic that implements the service may involve more than one request being se
 5. The Service reformats the response data into the output format as specified by VAPI and returns it to the client.
 
 In case the service does utilize event/callback reporting the the following is appended to the sequence above.
+
 6. The vehicle server issues an event message to ReceiveMessage.
+
 7. ReceiveMessage forwards the message to the EventHandler.
+
 8. The EventHandler reformats the event data into the VAPI output format for the service nd forwards it to the callbackInterceptor.
+
 9. The callbackInterceptor checks the event data to decide whether it is the last event being received as part of the invoked service call.
 If so it issues a request to the vehicle server to terminate the event reporting for this ongoing session.
+
 10. The callbackInterceptor forwards the callback message to the Client.
 
 This is the high level description of the information flow that does not mention details such that:

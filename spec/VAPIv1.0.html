@@ -100,7 +100,7 @@
     <section id="introduction">
       <h2>Introduction</h2>
       <p>
-      This specification defines an interface for access to vehicle d and services.
+      This specification defines an interface for access to access to vehicle data based both on a signal based abstraction model and a service based abstraction model.
       </p>
     </section>
 
@@ -123,6 +123,85 @@
 
     <section id="vapi-overview">
       <h2>VAPI Overview</h2>
+
+      <section id="deployment-scenarios">
+        <h2>VAPI Deployment Scenarios</h2>
+        The software components (SwC) and their possible deployments that are involved in the VAPI context are:
+        <ul>
+          <li>
+          Client: On or off vehicle deployment
+          </li>
+          <li>
+          Vehicle server: On vehicle deployment
+          </li>
+          <li>
+          Signal endpoint: On vehicle deployment
+          </li>
+          <li>
+          Service end point: On or off vehicle deployment
+          </li>
+          <li>
+          VAPI front-end lib: Deployed so as to enable statical/dynamical linking with a Client.
+          </li>
+        </ul>
+        Two interface specifications are used in this context:
+        <ul>
+          <li>
+          VAPI: The interface specification exposed to the client, defined in this document.
+          </li>
+          <li>
+          Vehicle connectivity specification (VCS): This the specification that defines an
+          interface that supports communication between remote end points over a TCP/IP-based network.
+          </li>
+        </ul>
+        The VCS is not explicitly exposed to the client, VAPI abstracts its details and thus enables different VCS solutions to be used in implementations of VAPI.
+        The VCS can be an OEM proprietary specification, or it can be an open specification like e. g. [[VISS]].<br>
+        The main deployment combinations of interest in a VAPI context for the two abstraction models are described below.
+
+        <section id="vapi-signal-deployment">
+          <h2>Deployment in a signal based abstraction model</h2>
+          The figure below shows a typical deployment architecture and messaging flow for client access of vehicle signals.
+        <figure id="fig-signal-deployment">
+          <img src="../images/vapi-architecture-base-signals.jpg" alt="VAPI signal based deployment.">
+          <figcaption> <span class="fig-title">VAPI signal based deployment.</span></figcaption>
+        </figure>
+        The signal endpoint, which typically is in a vehicle transducer, is deployed on the southbound side of the vehicle server.<br>
+        The VCS scope can be limited to support vehicle signals.
+        </section>
+
+        <section id="vapi-service-deployment">
+          <h2>Deployment in a service based abstraction model</h2>
+A service based abstraction model makes the deployment scenario more complex as the service endpoint can be deployed either at the client side or at the server side.
+
+A service endpoint implements the actions that the service performs. These actions typically involve accessing vehicle signals, which can be done either through vehicle native interfaces or through a VCS exposed by a signal based server.
+
+          <section id="vapi-clientside-deployment">
+            <h2>Client side service deployment</h2>
+With the service endpoint deployed at the client side the VCS scope can be limited to support vehicle signals.
+        <figure id="fig-clientside-deployment">
+          <img src="../images/vapi-architecture-local-endpoint.jpg" alt="VAPI client side service based deployment.">
+          <figcaption> <span class="fig-title">VAPI client side service based deployment.</span></figcaption>
+        </figure>
+Client side service deployments do not readily support implementation of a global arbitration of client access to services as one VAPI front-end implementation may not be shared by all clients. This may limit the usefulness of this type of deployment, but it may also be possible to mitigate by adding that functionality on top of all clients. VAPI does not include that functionality.
+          </section>
+
+          <section id="vapi-serverside-deployment">
+            <h2>Server side service deployment</h2>
+With the service endpoint deployed at the server side the VCS scope must include support for services.
+        <figure id="fig-serverside-deployment">
+          <img src="../images/vapi-architecture-remote-endpoint.jpg" alt="VAPI server side service based deployment.">
+          <figcaption> <span class="fig-title">VAPI server side service based deployment.</span></figcaption>
+        </figure>
+It may also support vehicle signal access, allowing a combination of client side and server side service deployments.
+
+It could then also be used by service end points to access vehicle signals, if a vehicle server that implements it is also deployed.          </section>
+        </section>
+
+      </section>
+    </section>
+
+    <section id="vapi-procedure-grouping">
+      <h2>VAPI Procedure Grouping</h2>
       <p>
         VAPI procedures are characterized as belonging to one of the groups Common, Data, or Service.
       <ul>
@@ -267,8 +346,45 @@
         </section>
       </section>
 
-      <section id="releasevehicle-procedure">
+      <section id="release-vehicle-procedure">
         <h2>ReleaseVehicle</h2>
+        <p>Disconnects communication setup with a vehicle.</p>
+
+        <p>
+        This procedure terminates a vehicle communication session for all protocols.
+        </p>
+
+        <section id="release-vehicle-signature">
+          <h2>Signature</h2>
+          <pre><code>ReleaseVehicle(vehicleId: uint32): GeneralOutput</code></pre>
+        </section>
+
+        <section id="release-vehicle-parameters">
+          <h2>Parameters</h2>
+          <ul class="param-list">
+            <li>
+              <strong>vehicleId</strong> (<span class="type">uint32</span>)
+              <br>
+              A reference to the vehicle that was obtained in a previous <a href="#getvehicle-procedure">GetVehicle</a>.
+            </li>
+          </ul>
+        </section>
+
+        <section id="release-vehicle-returns">
+          <h2>Returns</h2>
+            <span class="type"><code>GeneralOutput</code></span>
+            <br>
+            A struct containing the output data from the ReleaseVehicle procedure.
+            <pre><code>
+            {
+              Status: ProcedureStatus,
+              Error: *ErrorData
+            }
+            </code></pre>
+            Struct member descriptions:<br>
+            <a href="#procedure-status">Status: </a>The status of the latest service call to it.<br>
+            <a href="#error-data">Error: </a>Error information for the latest service call, if error occurred.
+        </section>
       </section>
 
       <section id="connect-procedure">
@@ -581,7 +697,7 @@
 
         <section id="get-st-credentials-signature">
           <h2>Signature</h2>
-          <pre><code>GetStCredentials(vehicleId: uint32, LtCredential string, purpose string): GetStCredentialsOutput</code></pre>
+          <pre><code>GetStCredentials(vehicleId: uint32, ltCredentials: string, purpose: string): GetStCredentialsOutput</code></pre>
         </section>
 
         <section id="get-st-credentials-parameters">
@@ -758,7 +874,7 @@
 
         <section id="getmetadata-signature">
           <h2>Signature</h2>
-          <pre><code>GetMetadata(vehicleId: uint32, path: string, stCredentials: string, callback: *fcn(GetMetadataOutput): GetMetadataOutput</code></pre>
+          <pre><code>GetMetadata(vehicleId: uint32, path: string, stCredentials: string): GetMetadataOutput</code></pre>
         </section>
 
         <section id="getmetadata-parameters">
@@ -779,12 +895,6 @@
               <br>
               The short term credentials that was obtained by a call to <a href="#get-st-credentials-procedure">GetStCredentials</a>.
             </li>
-            <li>
-              <strong>callback</strong> (<span class="type">*fcn(getmetadataOutput)</span>)
-              <br>
-              A pointer to a callback function that is called if an event message gets issued by the service.
-              If set to nil callbacks will not be issued.
-            </li>
           </ul>
         </section>
 
@@ -798,16 +908,13 @@
             {
               Status: ProcedureStatus,
               Error: *ErrorData,
-              Metadata: string,
-              ServiceId: uint32
+              Metadata: string
             }
             </code></pre>
             Struct member descriptions:<br>
             <a href="#procedure-status">Status: </a>The status of the latest service call to it.<br>
             <a href="#error-data">Error: </a>Error information for the latest service call, if error occurred.<br>
-            Metadata: A JSON object containing the metadata from the signals or services in the subtree.<br>
-            ServiceId: A reference to the service session that the client may use to call <a href="#cancel-service-procedure">CancelService</a>.
-            It may be set to zero in which case it is invalid.
+            Metadata: A JSON object containing the metadata from the signals or services in the subtree.
         </section>
 
         <section id="getmetadata-error">
@@ -820,7 +927,7 @@
             Error data shall conform to the error data definitions in [[VISS]] for signals.
             </li>
             <li>
-             The Metadata and ServiceId parameters are invalid if Status is set to FAILED.
+             The Metadata parameter is invalid if Status is set to FAILED.
             </li>
           </ul>
         </section>
