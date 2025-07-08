@@ -29,7 +29,7 @@ import (
 //	"github.com/google/uuid"
 )
 
-type Percentage uint8  // max = 100
+type Percentage float32  // min = 0, max = 100
 
 type MatrixId struct {
 	RowName string
@@ -57,6 +57,7 @@ type ActiveService struct {
 	serviceId uint32
 	messageId string
 	callback interface{}
+	path string
 	next *ActiveService
 }
 
@@ -280,7 +281,7 @@ func GetMetadata(vehicleId VehicleHandle, path string, stCredentials string) Get
 	requestId := generateRandomString()
 	clientMessage := `{"action":"get", "path":"` + path + filterParam + stCredParam + `, "requestId":"` + requestId + `"}`
 	responseChan := make(chan map[string]interface{})
-	ok := saveReturnHandle(&vehConn.connectedData, vehConn.connectedProtocol, 0, requestId, responseChan, nil)
+	ok := saveReturnHandle(&vehConn.connectedData, vehConn.connectedProtocol, "", 0, requestId, responseChan, nil)
 	if !ok {
 		var out GetMetadataOutput
 		out.Status = FAILED
@@ -342,7 +343,7 @@ func Set(vehicleId VehicleHandle, path string, value string, stCredentials strin
 	requestId := generateRandomString()
 	clientMessage := `{"action":"set", "path":"` + path  + `", "value":"` + value + "\"" + stCredParam + `, "requestId":"` + requestId + `"}`
 	responseChan := make(chan map[string]interface{})
-	ok := saveReturnHandle(&vehConn.connectedData, vehConn.connectedProtocol, 0, requestId, responseChan, nil)
+	ok := saveReturnHandle(&vehConn.connectedData, vehConn.connectedProtocol, "", 0, requestId, responseChan, nil)
 	if !ok {
 		var out GeneralOutput
 		out.Status = FAILED
@@ -377,7 +378,7 @@ func Get(vehicleId VehicleHandle, path string, filter string, stCredentials stri
 	requestId := generateRandomString()
 	clientMessage := `{"action":"get", "path":"` + path + "\"" + filterParam + stCredParam + `, "requestId":"` + requestId + `"}`
 	responseChan := make(chan map[string]interface{})
-	ok := saveReturnHandle(&vehConn.connectedData, vehConn.connectedProtocol, 0, requestId, responseChan, nil)
+	ok := saveReturnHandle(&vehConn.connectedData, vehConn.connectedProtocol, "", 0, requestId, responseChan, nil)
 	if !ok {
 		var out GetOutput
 		out.Status = FAILED
@@ -417,7 +418,7 @@ func subscribeCore(vehicleId VehicleHandle, path string, filter string, stCreden
 	requestId := generateRandomString()
 	clientMessage := `{"action":"subscribe", "path":"` + path + "\"" + filterParam + stCredParam + `, "requestId":"` + requestId + `"}`
 	responseChan := make(chan map[string]interface{})
-	ok := saveReturnHandle(&vehConn.connectedData, vehConn.connectedProtocol, serviceId, requestId, responseChan, callback)
+	ok := saveReturnHandle(&vehConn.connectedData, vehConn.connectedProtocol, path, serviceId, requestId, responseChan, callback)
 	if !ok {
 		var out SubscribeOutput
 		out.Status = FAILED
@@ -442,11 +443,12 @@ func Unsubscribe(vehicleId VehicleHandle, serviceId uint32) GeneralOutput {
 		out.Error = getErrorObject(400, "invalid_data", "Vehicle is not connected")
 		return out
 	}
-	subscriptionId := getSubscriptionId(vehConn.connectedData, vehConn.connectedProtocol, serviceId)
+	subscriptionId, _ := getSubscriptionIdAndPath(vehConn.connectedData, vehConn.connectedProtocol, serviceId)
 	requestId := generateRandomString()
+	serviceId = generateRandomUint32()
 	clientMessage := `{"action":"unsubscribe", "subscriptionId":"` + subscriptionId + `", "requestId":"` + requestId + `"}`
 	responseChan := make(chan map[string]interface{})
-	ok := saveReturnHandle(&vehConn.connectedData, vehConn.connectedProtocol, serviceId, requestId, responseChan, nil)
+	ok := saveReturnHandle(&vehConn.connectedData, vehConn.connectedProtocol, "", serviceId, requestId, responseChan, nil)
 	if !ok {
 		var out GeneralOutput
 		out.Status = FAILED
@@ -470,31 +472,28 @@ func CancelService(vehicleId VehicleHandle, serviceId uint32) GeneralOutput {
 		out.Error = getErrorObject(400, "invalid_data", "Vehicle is not connected")
 		return out
 	}
-	subscriptionId := getSubscriptionId(vehConn.connectedData, vehConn.connectedProtocol, serviceId)
-	requestId := generateRandomString()
-	clientMessage := `{"action":"unsubscribe", "subscriptionId":"` + subscriptionId + `", "requestId":"` + requestId + `"}`
-	responseChan := make(chan map[string]interface{})
-	ok := saveReturnHandle(&vehConn.connectedData, vehConn.connectedProtocol, serviceId, requestId, responseChan, nil)
-	if !ok {
-		var out GeneralOutput
-		out.Status = FAILED
-		out.Error = getErrorObject(400, "invalid_data", "Vehicle connection is lost")
-		return out
+	_, path := getSubscriptionIdAndPath(vehConn.connectedData, vehConn.connectedProtocol, serviceId)
+	getOut := Get(vehicleId, path, "", "")
+	if getOut.Status == SUCCESSFUL {
+		value := getOut.Data[0].Dp[0].Value
+		unsubOut := Unsubscribe(vehicleId, serviceId)
+		if unsubOut.Status == SUCCESSFUL {
+			setOut := Set(vehicleId, path, value, "")
+			if setOut.Status == SUCCESSFUL {
+				return GeneralOutput{SUCCESSFUL, nil}
+			}
+		}
 	}
-	sendMessage(vehConn, clientMessage)
-	var responseMap map[string]interface{}
-	select {
-		case responseMap = <- responseChan:  //wait for response from receiveMessage
-		
-	}
-	return reformatOutput(responseMap, "cancelservice").(GeneralOutput)
+	var out GeneralOutput
+	out.Status = FAILED
+	out.Error = getErrorObject(502, "bad_gateway", "Cancelling of service failed")
+	return out
 }
 
 // ****************** Seat services ***************
 // constants for the different seat movement types
 const (
 	LONGITUDINAL = "longitudinal" //Forward-backward direction of the vehicle
-//	LATERAL = "lateral"           // Left-right direction of the vehicle
 	VERTICAL = "vertical"         // Up-down direction of the vehicle
 	BACKREST = "backrest"         // Seat backrest angular
 	LUMBAR = "lumbar"             // Seat inflate-deflate lumbar
@@ -513,6 +512,12 @@ const (
 	BACKWARD_RECLINE = 100 //backrest movement
 )
 
+// constants for massage support
+const (
+	ROLL = "roll"
+	PULSE = "pulse"
+	WAVE = "wave"
+)
 
 type DataPoint struct {
 	Value string
@@ -537,15 +542,33 @@ type SubscribeOutput struct {
 	ServiceId uint32
 }
 
+type MassageOutput struct {
+	Status ProcedureStatus
+	Error *ErrorData
+	ServiceId uint32
+}
+
 type MoveSeatOutput struct {
 	Status ProcedureStatus
 	Error *ErrorData
 	Position Percentage
+	ServiceId uint32
+}
+
+type SupportData struct {
+	Name string
+	Description string
+}
+
+type ColumnData struct {
+	Name string
+	MovementSupport []SupportData
+	MassageSupport []SupportData
 }
 
 type RowDef struct {
 	RowName string
-	ColumnName []string
+	Column []ColumnData
 }
 
 type RaggedMatrix []RowDef
@@ -553,29 +576,44 @@ type RaggedMatrix []RowDef
 type GetPropertiesSeatingOutput struct {
 	Status ProcedureStatus
 	Error *ErrorData
-	Id RaggedMatrix
-	Movement []SeatMovementType
-}
-
-type SeatMovementType struct {
-	Name string
-	Description string
+	Properties RaggedMatrix
 }
 
 func MoveSeat(vehicleId VehicleHandle, seatId MatrixId, movementType string, position Percentage, stCredentials string, callback func(MoveSeatOutput)) MoveSeatOutput {
 	var out MoveSeatOutput
 	var actuatorPath string
+	if position < 0 || position > 100 {
+		out.Error = getErrorObject(400, "invalid_data", "position out of range")
+		out.Status = FAILED
+		return out
+	}
+	if !checkSupport(seatId, movementType, "move") {
+		out.Error = getErrorObject(400, "invalid_data", "Movement type not supported for this seat")
+		out.Status = FAILED
+		return out
+	}
 	switch movementType {
 		case LONGITUDINAL:
 			actuatorPath = getSeatPositionedPath("Vehicle.Cabin.Seat.RowX.ColumnY.Position", seatId)
+			position = 3 * position  //in millimeter, 300 mm dynamic range??
 		case LUMBAR:
-			actuatorPath = getSeatPositionedPath("Vehicle.Cabin.Seat.RowX.ColumnY.Backrest.Lumbar.Height", seatId)
+			actuatorPath = getSeatPositionedPath("Vehicle.Cabin.Seat.RowX.ColumnY.Backrest.Lumbar.Support", seatId)
+		case BACKREST:
+			actuatorPath = getSeatPositionedPath("Vehicle.Cabin.Seat.RowX.ColumnY.Backrest.Recline", seatId)
+			position = 0.9 * position - 45 //transform position to degrees; f(x) = 0.9*x - 45 f(0)=-45; f(100)=45 ??
 		default:
 			out.Error = getErrorObject(400, "invalid_data", "unknown movementType")
 			out.Status = FAILED
 			return out
 	}
-	setOut := Set(vehicleId, actuatorPath, strconv.Itoa(int(position)), stCredentials)
+	posStr := strconv.FormatFloat(float64(position), 'f', -1, 32)
+	if movementType == LONGITUDINAL {
+		dotIndex := strings.Index(posStr, ".")
+		if dotIndex != -1 {
+			posStr = posStr[:dotIndex] // remove fraction
+		}
+	}
+	setOut := Set(vehicleId, actuatorPath, posStr, stCredentials)
 	if setOut.Status == FAILED {
 		out.Status = FAILED
 		out.Error = setOut.Error
@@ -592,11 +630,66 @@ func MoveSeat(vehicleId VehicleHandle, seatId MatrixId, movementType string, pos
 	out.Status = SUCCESSFUL
 	if callback != nil {
 		serviceId := generateRandomUint32()
-		callbackInterceptor := makeCallbackInterceptor(vehicleId, callback, serviceId, actuatorPath, strconv.Itoa(int(position)))
+		callbackInterceptor := makeCallbackInterceptor(vehicleId, callback, serviceId, actuatorPath, posStr)
 		filter := `{"variant":"timebased","parameter":{"period":"500"}}`
 		subOut := subscribeCore(vehicleId, actuatorPath, filter, stCredentials, serviceId, callbackInterceptor)
 		if subOut.Status == SUCCESSFUL {
 			out.Status = ONGOING
+			out.ServiceId = serviceId
+		} else {
+			out.Status = FAILED
+			out.Error = getErrorObject(400, "invalid_data", "callback init failed")
+		}
+	}
+	return out
+}
+
+func ActivateMassage(vehicleId VehicleHandle, seatId MatrixId, massageType string, intensity Percentage, duration uint32, stCredentials string, callback func(MassageOutput)) MassageOutput {
+	var out MassageOutput
+	if intensity < 0 || intensity > 100 {
+		out.Error = getErrorObject(400, "invalid_data", "intensity out of range")
+		out.Status = FAILED
+		return out
+	}
+	if !checkSupport(seatId, massageType, "massage") {
+		out.Error = getErrorObject(400, "invalid_data", "Massage type not supported for this seat")
+		out.Status = FAILED
+		return out
+	}
+	massageOnPath := getSeatPositionedPath("Vehicle.Cabin.Seat.RowX.ColumnY.Switch.Massage.IsOn", seatId)
+	intensityPath := getSeatPositionedPath("Vehicle.Cabin.Seat.RowX.ColumnY.Switch.Massage.Intensity", seatId)
+	massageTypePath := getSeatPositionedPath("Vehicle.Cabin.Seat.RowX.ColumnY.Switch.Massage.MassageType", seatId)
+
+	intensityStr := strconv.FormatFloat(float64(intensity), 'f', -1, 32)
+	setOut := Set(vehicleId, intensityPath, intensityStr, stCredentials)
+	if setOut.Status == FAILED {
+		out.Status = FAILED
+		out.Error = setOut.Error
+		return out
+	}
+	setOut = Set(vehicleId, massageTypePath, massageType, stCredentials)
+	if setOut.Status == FAILED {
+		out.Status = FAILED
+		out.Error = setOut.Error
+		return out
+	}
+	setOut = Set(vehicleId, massageOnPath, "true", stCredentials)
+	if setOut.Status == FAILED {
+		out.Status = FAILED
+		out.Error = setOut.Error
+		return out
+	}
+	if callback != nil {
+		serviceId := generateRandomUint32()
+		if duration == 0 || duration > 24 * 3600 {
+			duration = 24 * 3600  //24 hours limit
+		}
+		callbackInterceptor := makeCallbackInterceptorDuration(vehicleId, callback, serviceId, time.Now().Add(time.Duration(float64(duration)*1e9)))
+		filter := `{"variant":"timebased","parameter":{"period":"1000"}}`
+		subOut := subscribeCore(vehicleId, massageOnPath, filter, stCredentials, serviceId, callbackInterceptor)
+		if subOut.Status == SUCCESSFUL {
+			out.Status = ONGOING
+			out.ServiceId = serviceId
 		} else {
 			out.Status = FAILED
 			out.Error = getErrorObject(400, "invalid_data", "callback init failed")
@@ -619,15 +712,12 @@ func GetPropertiesSeating(vehicleId VehicleHandle) GetPropertiesSeatingOutput {
 		return out
 	}
 	out.Status = SUCCESSFUL
-	out.Id = []RowDef{{"Row1", []string{"DriverSide", "PassengerSide"}}, {"Row2", []string{"Couch"}}}
-	out.Movement = []SeatMovementType{{LONGITUDINAL, "Seat movement in the direction parallel to the driving direction"},
-	{VERTICAL, "Seat movement in the vertical direction to the horizontal plane"},
-	{LUMBAR, "Seat movement of the lumbar support"}}
+	out.Properties = getSimulatedProperties()
 	return out
 }
 
 // HVAC services
-func hvacService1(vehicleId VehicleHandle) GeneralOutput {
+func HvacService1(vehicleId VehicleHandle) GeneralOutput {
 	var out GeneralOutput
 	vehConn := getVehicleConnection(vehicleId)
 	if vehConn == nil {
@@ -636,7 +726,7 @@ func hvacService1(vehicleId VehicleHandle) GeneralOutput {
 		return out
 	}
 	out.Status = SUCCESSFUL
-	fmt.Printf("hvacService1:succefully called")
+	fmt.Printf("HvacService1:succefully simulated")
 	return out
 }
 
@@ -841,10 +931,10 @@ func updateActiveServiceKey(connectedDataList **ConnectedData, protocol string, 
 	}
 }
 
-func getSubscriptionId(connectedDataList *ConnectedData, protocol string, serviceId uint32) string {
+func getSubscriptionIdAndPath(connectedDataList *ConnectedData, protocol string, serviceId uint32) (string, string) {
 	if connectedDataList == nil {
-		fmt.Printf("getSubscriptionId: connectedDataList is empty for protocol=%s, serviceId=%d\n", protocol, serviceId) // should not be possible...
-		return ""
+		fmt.Printf("getSubscriptionIdAndPath: connectedDataList is empty for protocol=%s, serviceId=%d\n", protocol, serviceId) // should not be possible...
+		return "", ""
 	} else {
 		iterator := connectedDataList
 		for iterator != nil {
@@ -852,8 +942,7 @@ func getSubscriptionId(connectedDataList *ConnectedData, protocol string, servic
 				activeServiceIterator := (*iterator).activeService
 				for activeServiceIterator != nil {
 					if (*activeServiceIterator).serviceId == serviceId {
-//fmt.Printf("getSubscriptionId: subscriptionId = %s\n", (*activeServiceIterator).messageId)
-						return (*activeServiceIterator).messageId
+						return (*activeServiceIterator).messageId, (*activeServiceIterator).path
 					}
 					activeServiceIterator = (*activeServiceIterator).next
 				}
@@ -861,10 +950,10 @@ func getSubscriptionId(connectedDataList *ConnectedData, protocol string, servic
 			iterator = (*iterator).next
 		}
 	}
-	return ""
+	return "", ""
 }
 
-func saveReturnHandle(connectedDataList **ConnectedData, protocol string, serviceId uint32, requestId string, responseChan chan map[string]interface{}, callback interface{}) bool {
+func saveReturnHandle(connectedDataList **ConnectedData, protocol string, path string, serviceId uint32, requestId string, responseChan chan map[string]interface{}, callback interface{}) bool {
 	if *connectedDataList == nil {
 		return false
 	} else {
@@ -875,6 +964,7 @@ func saveReturnHandle(connectedDataList **ConnectedData, protocol string, servic
 				activeServiceIterator := &(*iterator).activeService
 				if *activeServiceIterator == nil {
 					var activeService ActiveService
+					activeService.path = path
 					activeService.messageId = requestId
 					activeService.serviceId = serviceId
 					activeService.callback = callback
@@ -884,6 +974,7 @@ func saveReturnHandle(connectedDataList **ConnectedData, protocol string, servic
 				for *activeServiceIterator != nil {
 					if (*activeServiceIterator).next == nil {
 						var activeService ActiveService
+						activeService.path = path
 						activeService.messageId = requestId
 						activeService.serviceId = serviceId
 						activeService.callback = callback
@@ -1303,17 +1394,115 @@ func makeCallbackInterceptor(vehicleId VehicleHandle, callback interface{}, serv
 			errorData = subOut.Error
 			Unsubscribe(vehicleId, serviceId)
 		}
-		switch callback.(type) {
-			case func(MoveSeatOutput):
-				var out MoveSeatOutput
-				out.Status = status
-				out.Error = errorData
-				if status != FAILED {
-					position, _ := strconv.Atoi(subOut.Data[dataIndex].Dp[0].Value)
-					out.Position = Percentage(position)
-				}
-				callback.(func(MoveSeatOutput))(out)
+		if callback != nil {
+			switch callback.(type) {
+				case func(MoveSeatOutput):
+					var out MoveSeatOutput
+					out.Status = status
+					out.Error = errorData
+					out.ServiceId = serviceId
+					if status != FAILED {
+						position, _ := strconv.Atoi(subOut.Data[dataIndex].Dp[0].Value)
+						out.Position = Percentage(position)
+					}
+					callback.(func(MoveSeatOutput))(out)
+			}
 		}
 	}
 }
 
+func makeCallbackInterceptorDuration(vehicleId VehicleHandle, callback interface{}, serviceId uint32, finalTime time.Time) func(SubscribeOutput) {
+	return func(subOut SubscribeOutput) {
+		var status ProcedureStatus
+		var errorData *ErrorData
+		if subOut.Status == SUCCESSFUL {
+			status = ONGOING
+			if time.Now().After(finalTime) {
+				status = SUCCESSFUL
+				Unsubscribe(vehicleId, serviceId)
+			}
+		} else {
+			status = FAILED
+			errorData = subOut.Error
+			Unsubscribe(vehicleId, serviceId)
+		}
+		if callback != nil {
+			switch callback.(type) {
+				case func(MassageOutput):
+					var out MassageOutput
+					out.Status = status
+					out.Error = errorData
+					out.ServiceId = serviceId
+					callback.(func(MassageOutput))(out)
+			}
+		}
+	}
+}
+
+func getSimulatedProperties() RaggedMatrix {
+	var properties RaggedMatrix
+	properties = make([]RowDef, 2)
+	var numofcols []int = []int{2, 2}
+	var columnName []string = []string{"DriverSide", "PassengerSide"}
+	var movementSupport []SupportData = []SupportData{{LONGITUDINAL, "Seat movement in the direction parallel to the driving direction"},
+	{VERTICAL, "Seat movement in the vertical direction to the horizontal plane"}, {LUMBAR, "Seat movement of the lumbar support"}}
+	var massageSupport []SupportData = []SupportData{{ROLL, "A rolling massage sensation"},
+	{PULSE, "A pulsating massage sensation"}, {WAVE, "A wave like massage sensation"}}
+	for i := 0; i < 2; i++ {
+		properties[i].RowName = "Row" + strconv.Itoa(i+1)
+		properties[i].Column = make([]ColumnData, numofcols[i])
+		for j := 0; j < numofcols[i]; j++ {
+			properties[i].Column[j].Name = columnName[j]
+			properties[i].Column[j].MovementSupport = getSimulatedSupport(i, j, movementSupport)
+			properties[i].Column[j].MassageSupport = getSimulatedSupport(i, j, massageSupport)
+		}
+	}
+	return properties
+}
+
+func getSimulatedSupport(row int, column int, support []SupportData) []SupportData {
+	if row == 0 && column == 0 { // driver
+		return support
+	} else if row == 0 && column == 1 { // front row passenger
+		simSupport := make([]SupportData, 1)
+		simSupport[0].Name = support[0].Name
+		simSupport[0].Description = support[0].Description
+		return simSupport
+	}
+	return nil // all other passengers
+}
+
+func checkSupport(seatId MatrixId, support string, supportType string) bool {
+	simProp := getSimulatedProperties()
+	switch supportType {
+		case "massage":
+			for i := 0; i < len(simProp); i++ {
+				if simProp[i].RowName == seatId.RowName {
+					for j := 0; j < len(simProp[i].Column); j++ {
+						if simProp[i].Column[j].Name == seatId.ColumnName {
+							for k := 0; k < len(simProp[i].Column[j].MassageSupport); k++ {
+								if simProp[i].Column[j].MassageSupport[k].Name == support {
+									return true
+								}
+							}
+						}
+					}
+				}
+			}
+		case "move":
+			for i := 0; i < len(simProp); i++ {
+				if simProp[i].RowName == seatId.RowName {
+					for j := 0; j < len(simProp[i].Column); j++ {
+						if simProp[i].Column[j].Name == seatId.ColumnName {
+							for k := 0; k < len(simProp[i].Column[j].MovementSupport); k++ {
+								if simProp[i].Column[j].MovementSupport[k].Name == support {
+									return true
+								}
+							}
+						}
+					}
+				}
+			}
+	}
+	return false
+}

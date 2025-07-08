@@ -1309,15 +1309,13 @@ It could then also be used by service end points to access vehicle signals, if a
             {
               Status: ProcedureStatus,
               Error: *ErrorData,
-              Id: RaggedMatrix
-              Movement: []SeatMovementType
+              Properties: RaggedMatrix
             }
             </code></pre>
             Struct member descriptions:<br>
             <a href="#procedure-status">Status: </a>The status of the latest service call to it.<br>
             <a href="#error-data">Error: </a>Error information for the latest service call, if error occurred.<br>
-            <a href="#ragged-matrix">Id: </a>A ragged matrix of seat identities.<br>
-            <a href="#seat-movement">Movement: </a>An array of structs describing the seat movement types.
+            <a href="#ragged-matrix">Properties: </a>A ragged matrix of seat identities and available properties per seat.<br>
         </section>
 
         <section id="get-properties-seating-error">
@@ -1330,7 +1328,7 @@ It could then also be used by service end points to access vehicle signals, if a
             Error data shall conform to the error data definitions in [[VISS]] for signals.
             </li>
             <li>
-             The Id and Movement parameters are invalid if Status is set to FAILED.
+             The Properties parameter is invalid if Status is set to FAILED.
             </li>
           </ul>
         </section>
@@ -1338,10 +1336,10 @@ It could then also be used by service end points to access vehicle signals, if a
 
     <section id="move-seat-procedure">
       <h2>MoveSeat</h2>
-        <p>Performs all possible seat movements.</p>
+        <p>Performs all supported seat movements.</p>
 
         <p>
-        This procedure performs all possible types of seat movements.
+        This procedure performs all supported types of seat movements.
         It supports "synchronous" movement to any position provided as input to the service, 
         and also "asynchronous" movement where the client terminates the service execution by invokation of <a href="#cancel-service-procedure">CancelService</a>.
         In the asynchronous scenario the provided input to the service is typically one of the position range end points (zero or hundred percent).
@@ -1372,7 +1370,7 @@ It could then also be used by service end points to access vehicle signals, if a
             <li>
               <strong>movementType</strong> (<span class="type">string</span>)
               <br>
-              The seat movement type must be one of the SeatMovements elements retrieved by <a href="#get-properties-seating-procedure">GetPropertiesSeating</a>.
+              The seat movement type must be one of the MovementSupport elements retrieved by <a href="#get-properties-seating-procedure">GetPropertiesSeating</a>.
             </li>
             <li>
               <strong>position</strong> (<span class="type"><a href="#percentage">Percentage</a></span>)
@@ -1397,7 +1395,7 @@ It could then also be used by service end points to access vehicle signals, if a
           <h2>Returns</h2>
             <span class="type"><code>MoveSeatOutput</code></span>
             <br>
-            A struct containing the output data from the Subscribe procedure.
+            A struct containing the output data from the MoveSeat procedure.
             This shall be returned both synchronously on the procedure  call and asynchronously on event trigger conditions.
             <pre><code>
             {
@@ -1426,6 +1424,101 @@ It could then also be used by service end points to access vehicle signals, if a
             </li>
             <li>
              The Position and ServiceId parameters are invalid if Status is set to FAILED.
+            </li>
+          </ul>
+        </section>
+    </section>
+
+    <section id="activate-massage-procedure">
+      <h2>ActivateMassage</h2>
+        <p>Performs all supported massage types.</p>
+
+        <p>
+        This procedure performs all supported types of seat massage.
+        It supports time bound set by the duration provided as input to the service.
+        The client can at any time terminate the service execution by invokation of <a href="#cancel-service-procedure">CancelService</a>.
+        </p>
+
+        <section id="activate-massage-signature">
+          <h2>Signature</h2>
+          <pre><code>ActivateMassage(vehicleId: uint32, seatId: MatrixId, massageType: string, intensity: Percentage, duration: uint32,
+          stCredentials: string, callback: *fcn(MassageOutput): MassageOutput</code></pre>
+        </section>
+
+        <section id="activate-massage-parameters">
+          <h2>Parameters</h2>
+          <ul class="param-list">
+            <li>
+              <strong>vehicleId</strong> (<span class="type">uint32</span>)
+              <br>
+              A reference to the vehicle that was obtained in a previous <a href="#getvehicle-procedure">GetVehicle</a>.
+            </li>
+            <li>
+              <strong>seatId</strong> (<span class="type"><a href="#matrix-id">MatrixId</a></span>)
+              <br>
+              The seat Id identifies one of the seats in the vehicle.
+            </li>
+            <li>
+              <strong>massageType</strong> (<span class="type">string</span>)
+              <br>
+              The massage type type must be one of the MassageSupport elements retrieved by <a href="#get-properties-seating-procedure">GetPropertiesSeating</a>.
+            </li>
+            <li>
+              <strong>intensity</strong> (<span class="type"><a href="#percentage">Percentage</a></span>)
+              <br>
+              The massage intensity is expressed in a percentage where zero (0) is the minimum level and hundred (100) is the maximum level.
+            </li>
+            <li>
+              <strong>duration</strong> (<span class="type">uint32</span>)
+              <br>
+              The massage duration is expressed in seconds. It is limited to a maximum duration of 24 hours.
+              If set to zero then the duration becomes set to 24 hours.
+            </li>
+            <li>
+              <strong>stCredentials</strong> (<span class="type">string</span>)
+              <br>
+              The short term credentials that was obtained by a call to <a href="#get-st-credentials-procedure">GetStCredentials</a>.
+            </li>
+            <li>
+              <strong>callback</strong> (<span class="type">*fcn(MassageOutput)</span>)
+              <br>
+              A pointer to a callback function that is called if an event message gets issued by the service.
+              If set to nil callbacks will not be issued.
+            </li>
+          </ul>
+        </section>
+
+        <section id="activate-massage-returns">
+          <h2>Returns</h2>
+            <span class="type"><code>MassageOutput</code></span>
+            <br>
+            A struct containing the output data from the ActivateMassage procedure.
+            This shall be returned both synchronously on the procedure  call and asynchronously on event trigger conditions.
+            <pre><code>
+            {
+              Status: ProcedureStatus,
+              Error: *ErrorData,
+              ServiceId: uint32
+            }
+            </code></pre>
+            Struct member descriptions:<br>
+            <a href="#procedure-status">Status: </a>The status of the latest service call to it.<br>
+            <a href="#error-data">Error: </a>Error information for the latest service call, if error occurred.<br>
+            ServiceId: A reference to the service session that the client may use to call <a href="#cancel-service-procedure">CancelService</a>.
+            It may be set to zero in which case it is invalid.
+        </section>
+
+        <section id="activate-massage-error">
+          <h2>Error</h2>
+          <ul class="error-list">
+            <li>
+            If Status is set to FAILED then Error must be available and populated with error data, else the pointer to Error shall be set to nil.
+            </li>
+            <li>
+            Error data shall conform to the error data definitions in [[VISS]] for signals.
+            </li>
+            <li>
+             The ServiceId parameter is invalid if Status is set to FAILED.
             </li>
           </ul>
         </section>
@@ -1540,11 +1633,11 @@ It could then also be used by service end points to access vehicle signals, if a
  
       <section id="percentage">
         <h2>Percentage</h2>
-        An integer value ranging from zero to one hundred.
+        A float value ranging from zero to one hundred.
         This represents the percentage of the current value within a range calculated as current value / (max range value - min range value).
         The semantics of max and min range values shall be defined in the context of the range being addressed.
         <pre><code>
-        uint8
+        float
         min = 0
         max = 100
         </code></pre>
@@ -1566,13 +1659,26 @@ It could then also be used by service end points to access vehicle signals, if a
         A two-dimensional matrix in which the number of elements may vary in the different rows.
         The matrix is represented as an array of RowDef elements.
         The Rowdef datatype is a struct with one element representing the name of the row,
-        and the other is a string array containing the elements of that row.
+        and the other is a string array containing the elements of that row,
+        each containing the column name and the available properties.
         <pre><code>
+        SupportData: struct {
+            Name: string,
+            Description: string
+        }
+
+        ColumnData: struct {
+            Name: string,
+            MovementSupport: []SupportData,
+            MassageSupport: []SupportData
+        }
+
         RowDef: struct {
         {
             RowName: string,
-            ColumnName: []string
+            Column: []ColumnData
         }
+
         RaggedMatrix: []RowDef
         </code></pre>
       </section>
@@ -1592,11 +1698,6 @@ It could then also be used by service end points to access vehicle signals, if a
               <strong>longitudal:</strong>
               Seat movement in the direction parallel to the driving direction.
               Forward/backward movements with max backwards being zero percentage.
-            </li>
-            <li>
-              <strong>lateral:</strong>
-              Seat movement in the direction anti-parallel to the driving direction, in the horizontal plane.
-              Left/right movements with max left being zero percentage.
             </li>
             <li>
               <strong>vertical:</strong>

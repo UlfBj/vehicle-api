@@ -41,8 +41,13 @@ func subscribeOutUnpack(subscribeOut VapiViss.SubscribeOutput) {
 func moveSeatOutUnpack(moveSeatOut VapiViss.MoveSeatOutput) {
 	showServiceStatus(moveSeatOut.Status, moveSeatOut.Error)
 	if moveSeatOut.Status != VapiViss.FAILED {
-		fmt.Printf("Position=%d\n", moveSeatOut.Position)
+		fmt.Printf("Position=%f\n", moveSeatOut.Position)
 	}
+}
+
+func massageOutUnpack(massageOut VapiViss.MassageOutput) {
+	fmt.Printf("\nMassage execution status:\n")
+	showServiceStatus(massageOut.Status, massageOut.Error)
 }
 
 func showServiceStatus(status VapiViss.ProcedureStatus, err *VapiViss.ErrorData) {
@@ -100,7 +105,7 @@ func main() {
 	subscribeOut := VapiViss.Subscribe(vehicle1, path, filter, "", subscribeOutUnpack)
 	subscribeOutUnpack(subscribeOut)
 
-	fmt.Printf("Sleep for 3 secs to lreceive a few events...\n")
+	fmt.Printf("Sleep for 3 secs to receive a few events...\n")
 	time.Sleep(3000 * time.Millisecond)
 
 	fmt.Printf("Unsubscribe(vehicle1, %d)\n", subscribeOut.ServiceId)
@@ -111,19 +116,21 @@ func main() {
 	getPropertiesSeatingOut := VapiViss.GetPropertiesSeating(vehicle1)
 	showServiceStatus(getPropertiesSeatingOut.Status, getPropertiesSeatingOut.Error)
 	if getPropertiesSeatingOut.Status == VapiViss.SUCCESSFUL {
-		seatIdList := getPropertiesSeatingOut.Id
 		fmt.Printf("Seating properties:\n")
-		fmt.Printf("Seat Ids:\n")
-		for i := 0; i<len(seatIdList); i++ {
-			fmt.Printf("%s:",seatIdList[i].RowName)
-			for j := 0; j<len(seatIdList[i].ColumnName); j++ {
-				fmt.Printf("%s ",seatIdList[i].ColumnName[j])
+		for i := 0; i<len(getPropertiesSeatingOut.Properties); i++ {
+			for j := 0; j<len(getPropertiesSeatingOut.Properties[i].Column); j++ {
+				fmt.Printf("Seat Id= %s, %s\n", getPropertiesSeatingOut.Properties[i].RowName, getPropertiesSeatingOut.Properties[i].Column[j].Name)
+				fmt.Printf("Movement support: ")
+				for k := 0; k<len(getPropertiesSeatingOut.Properties[i].Column[j].MovementSupport); k++ {
+					fmt.Printf("%s, ",getPropertiesSeatingOut.Properties[i].Column[j].MovementSupport[k])
+				}
+				fmt.Printf("\n")
+				fmt.Printf("Massage support: ")
+				for k := 0; k<len(getPropertiesSeatingOut.Properties[i].Column[j].MassageSupport); k++ {
+					fmt.Printf("%s, ",getPropertiesSeatingOut.Properties[i].Column[j].MassageSupport[k])
+				}
+				fmt.Printf("\n")
 			}
-			fmt.Printf("\n")
-		}
-		fmt.Printf("Seat movement types:\n")
-		for i := 0; i<len(getPropertiesSeatingOut.Movement); i++ {
-			fmt.Printf("%s:%s\n",getPropertiesSeatingOut.Movement[i].Name, getPropertiesSeatingOut.Movement[i].Description)
 		}
 	}
 
@@ -133,17 +140,29 @@ func main() {
 	setOut := VapiViss.Set(vehicle1, longitudinalPath, "2", "")
 	showServiceStatus(setOut.Status,setOut.Error)
 
-	fmt.Printf("Sleep for 20 secs to let execution duration from Set finish..\n")
-	time.Sleep(20 * time.Second)  //wait to let execution duration from Set finish 
+	fmt.Printf("Sleep for 12 secs to let execution duration from Set finish..\n")
+	time.Sleep(12 * time.Second)
 
 	var seatId VapiViss.MatrixId
-	seatId.RowName = getPropertiesSeatingOut.Id[0].RowName
-	seatId.ColumnName = getPropertiesSeatingOut.Id[0].ColumnName[0]
-	fmt.Printf("MoveSeat(vehicle1, seatId, longitudinal, %D, moveSeatOutUnpack)\n", VapiViss.BACKWARD)
-	moveSeatOut := VapiViss.MoveSeat(vehicle1, seatId, "longitudinal", VapiViss.BACKWARD, "", moveSeatOutUnpack)
+	seatId.RowName = getPropertiesSeatingOut.Properties[0].RowName
+	seatId.ColumnName = getPropertiesSeatingOut.Properties[0].Column[0].Name
+	fmt.Printf("MoveSeat(vehicle1, seatId, LONGITUDINAL, %d, moveSeatOutUnpack)\n", VapiViss.BACKWARD)
+	moveSeatOut := VapiViss.MoveSeat(vehicle1, seatId, VapiViss.LONGITUDINAL, VapiViss.BACKWARD, "", moveSeatOutUnpack)
 	showServiceStatus(moveSeatOut.Status, moveSeatOut.Error)
 
-	time.Sleep(30 * time.Second)  //wait to let execution duration from MoveSeat finish 
+	fmt.Printf("Sleep for 5 secs to let execution duration from moveSeat get about half way..\n")
+	time.Sleep(5 * time.Second)
+
+	fmt.Printf(`CancelService(vehicle1, %d)`+"\n", moveSeatOut.ServiceId)
+	cancelServiceOut := VapiViss.CancelService(vehicle1, moveSeatOut.ServiceId)
+	showServiceStatus(cancelServiceOut.Status,cancelServiceOut.Error)
+
+	fmt.Printf("ActivateMassage(vehicle1, seatId, ROLL, 50, 10, '', massageOutUnpack)\n")
+	massageOut := VapiViss.ActivateMassage(vehicle1, seatId, VapiViss.ROLL, 50, 10, "", massageOutUnpack)
+	massageOutUnpack(massageOut)
+
+	fmt.Printf("Sleep for 15 secs to let massage execution duration=10s to finish\n")
+	time.Sleep(15 * time.Second)
 
 /*	fmt.Printf(`Get(vehicle1, %s, %s, "")`+"\n", longitudinalPath, filter)
 	for i := 0; i < 10; i++ {

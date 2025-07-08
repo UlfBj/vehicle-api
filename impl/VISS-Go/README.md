@@ -12,6 +12,27 @@ Run vapiTest
 
 $ ./vapiTest
 
+# VSS massage exensions
+The service ActivateMassage requires the following nodes to be added to the standard VSS tree.
+They should be added to the Cabin/Seat.vspec file, below the 'Switch.Massage' branch definition
+```
+# ----- VAPI additions -----
+Switch.Massage.IsOn:
+  datatype: boolean
+  description: Indicates if mssage is on or off. True = On. False = Off.
+  type: actuator
+
+Switch.Massage.Intensity:
+  datatype: float
+  description: Indicates if mssage is on or off. Min intensity = 0. Max intensity = 100.
+  type: actuator
+
+Switch.Massage.MassageType:
+  datatype: string
+  description: The type of massage that will be activated.
+  type: actuator
+```
+
 # Service invokation achitecture
 The image below shows the architecture for the message flows when a client invokes a service.
 ![VAPI service invokation architecture](/images/vapi-service-invokation-arch.jpg)
