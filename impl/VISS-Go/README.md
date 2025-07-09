@@ -19,12 +19,12 @@ They should be added to the Cabin/Seat.vspec file, below the 'Switch.Massage' br
 # ----- VAPI additions -----
 Switch.Massage.IsOn:
   datatype: boolean
-  description: Indicates if mssage is on or off. True = On. False = Off.
+  description: Indicates if massage is on or off. True = On. False = Off.
   type: actuator
 
 Switch.Massage.Intensity:
   datatype: float
-  description: Indicates if mssage is on or off. Min intensity = 0. Max intensity = 100.
+  description: The intensity of the massage that will be activated. Min intensity = 0. Max intensity = 100.
   type: actuator
 
 Switch.Massage.MassageType:

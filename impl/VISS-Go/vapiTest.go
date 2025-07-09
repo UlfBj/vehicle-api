@@ -207,7 +207,7 @@ func main() {
 	showServiceStatus(disconnectOut.Status, disconnectOut.Error)
 
 
-	fmt.Printf("GetPropertiesSeatId(vehicle1)\n")
+	fmt.Printf("GetPropertiesSeating(vehicle1)\n")
 	getPropertiesSeatingOut = VapiViss.GetPropertiesSeating(vehicle1)
 	showServiceStatus(getPropertiesSeatingOut.Status, getPropertiesSeatingOut.Error)
 

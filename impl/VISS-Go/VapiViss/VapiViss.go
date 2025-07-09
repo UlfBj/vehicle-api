@@ -58,6 +58,7 @@ type ActiveService struct {
 	messageId string
 	callback interface{}
 	path string
+	value string
 	next *ActiveService
 }
 
@@ -281,7 +282,7 @@ func GetMetadata(vehicleId VehicleHandle, path string, stCredentials string) Get
 	requestId := generateRandomString()
 	clientMessage := `{"action":"get", "path":"` + path + filterParam + stCredParam + `, "requestId":"` + requestId + `"}`
 	responseChan := make(chan map[string]interface{})
-	ok := saveReturnHandle(&vehConn.connectedData, vehConn.connectedProtocol, "", 0, requestId, responseChan, nil)
+	ok := saveReturnHandle(&vehConn.connectedData, vehConn.connectedProtocol, "", "", 0, requestId, responseChan, nil)
 	if !ok {
 		var out GetMetadataOutput
 		out.Status = FAILED
@@ -343,7 +344,7 @@ func Set(vehicleId VehicleHandle, path string, value string, stCredentials strin
 	requestId := generateRandomString()
 	clientMessage := `{"action":"set", "path":"` + path  + `", "value":"` + value + "\"" + stCredParam + `, "requestId":"` + requestId + `"}`
 	responseChan := make(chan map[string]interface{})
-	ok := saveReturnHandle(&vehConn.connectedData, vehConn.connectedProtocol, "", 0, requestId, responseChan, nil)
+	ok := saveReturnHandle(&vehConn.connectedData, vehConn.connectedProtocol, "", "", 0, requestId, responseChan, nil)
 	if !ok {
 		var out GeneralOutput
 		out.Status = FAILED
@@ -378,7 +379,7 @@ func Get(vehicleId VehicleHandle, path string, filter string, stCredentials stri
 	requestId := generateRandomString()
 	clientMessage := `{"action":"get", "path":"` + path + "\"" + filterParam + stCredParam + `, "requestId":"` + requestId + `"}`
 	responseChan := make(chan map[string]interface{})
-	ok := saveReturnHandle(&vehConn.connectedData, vehConn.connectedProtocol, "", 0, requestId, responseChan, nil)
+	ok := saveReturnHandle(&vehConn.connectedData, vehConn.connectedProtocol, "", "", 0, requestId, responseChan, nil)
 	if !ok {
 		var out GetOutput
 		out.Status = FAILED
@@ -396,10 +397,10 @@ func Get(vehicleId VehicleHandle, path string, filter string, stCredentials stri
 
 func Subscribe(vehicleId VehicleHandle, path string, filter string, stCredentials string, callback func(SubscribeOutput)) SubscribeOutput {
 	serviceId := generateRandomUint32()
-	return subscribeCore(vehicleId, path, filter, stCredentials, serviceId, callback)
+	return subscribeCore(vehicleId, path, "", filter, stCredentials, serviceId, callback)
 }
 
-func subscribeCore(vehicleId VehicleHandle, path string, filter string, stCredentials string, serviceId uint32, callback func(SubscribeOutput)) SubscribeOutput {
+func subscribeCore(vehicleId VehicleHandle, path string, cancelValue string, filter string, stCredentials string, serviceId uint32, callback func(SubscribeOutput)) SubscribeOutput {
 	vehConn := getVehicleConnection(vehicleId)
 	if vehConn == nil {
 		var out SubscribeOutput
@@ -418,7 +419,7 @@ func subscribeCore(vehicleId VehicleHandle, path string, filter string, stCreden
 	requestId := generateRandomString()
 	clientMessage := `{"action":"subscribe", "path":"` + path + "\"" + filterParam + stCredParam + `, "requestId":"` + requestId + `"}`
 	responseChan := make(chan map[string]interface{})
-	ok := saveReturnHandle(&vehConn.connectedData, vehConn.connectedProtocol, path, serviceId, requestId, responseChan, callback)
+	ok := saveReturnHandle(&vehConn.connectedData, vehConn.connectedProtocol, path, cancelValue, serviceId, requestId, responseChan, callback)
 	if !ok {
 		var out SubscribeOutput
 		out.Status = FAILED
@@ -443,12 +444,12 @@ func Unsubscribe(vehicleId VehicleHandle, serviceId uint32) GeneralOutput {
 		out.Error = getErrorObject(400, "invalid_data", "Vehicle is not connected")
 		return out
 	}
-	subscriptionId, _ := getSubscriptionIdAndPath(vehConn.connectedData, vehConn.connectedProtocol, serviceId)
+	subscriptionId, _, _ := getCancelData(vehConn.connectedData, vehConn.connectedProtocol, serviceId)
 	requestId := generateRandomString()
 	serviceId = generateRandomUint32()
 	clientMessage := `{"action":"unsubscribe", "subscriptionId":"` + subscriptionId + `", "requestId":"` + requestId + `"}`
 	responseChan := make(chan map[string]interface{})
-	ok := saveReturnHandle(&vehConn.connectedData, vehConn.connectedProtocol, "", serviceId, requestId, responseChan, nil)
+	ok := saveReturnHandle(&vehConn.connectedData, vehConn.connectedProtocol, "", "", serviceId, requestId, responseChan, nil)
 	if !ok {
 		var out GeneralOutput
 		out.Status = FAILED
@@ -472,10 +473,14 @@ func CancelService(vehicleId VehicleHandle, serviceId uint32) GeneralOutput {
 		out.Error = getErrorObject(400, "invalid_data", "Vehicle is not connected")
 		return out
 	}
-	_, path := getSubscriptionIdAndPath(vehConn.connectedData, vehConn.connectedProtocol, serviceId)
-	getOut := Get(vehicleId, path, "", "")
-	if getOut.Status == SUCCESSFUL {
-		value := getOut.Data[0].Dp[0].Value
+	_, path, value := getCancelData(vehConn.connectedData, vehConn.connectedProtocol, serviceId)
+	if len(value) == 0 {
+		getOut := Get(vehicleId, path, "", "")
+		if getOut.Status == SUCCESSFUL {
+			value = getOut.Data[0].Dp[0].Value
+		}
+	}
+	if len(value) != 0 {
 		unsubOut := Unsubscribe(vehicleId, serviceId)
 		if unsubOut.Status == SUCCESSFUL {
 			setOut := Set(vehicleId, path, value, "")
@@ -632,7 +637,7 @@ func MoveSeat(vehicleId VehicleHandle, seatId MatrixId, movementType string, pos
 		serviceId := generateRandomUint32()
 		callbackInterceptor := makeCallbackInterceptor(vehicleId, callback, serviceId, actuatorPath, posStr)
 		filter := `{"variant":"timebased","parameter":{"period":"500"}}`
-		subOut := subscribeCore(vehicleId, actuatorPath, filter, stCredentials, serviceId, callbackInterceptor)
+		subOut := subscribeCore(vehicleId, actuatorPath, "", filter, stCredentials, serviceId, callbackInterceptor)
 		if subOut.Status == SUCCESSFUL {
 			out.Status = ONGOING
 			out.ServiceId = serviceId
@@ -686,7 +691,7 @@ func ActivateMassage(vehicleId VehicleHandle, seatId MatrixId, massageType strin
 		}
 		callbackInterceptor := makeCallbackInterceptorDuration(vehicleId, callback, serviceId, time.Now().Add(time.Duration(float64(duration)*1e9)))
 		filter := `{"variant":"timebased","parameter":{"period":"1000"}}`
-		subOut := subscribeCore(vehicleId, massageOnPath, filter, stCredentials, serviceId, callbackInterceptor)
+		subOut := subscribeCore(vehicleId, massageOnPath, "false", filter, stCredentials, serviceId, callbackInterceptor)
 		if subOut.Status == SUCCESSFUL {
 			out.Status = ONGOING
 			out.ServiceId = serviceId
@@ -931,10 +936,10 @@ func updateActiveServiceKey(connectedDataList **ConnectedData, protocol string, 
 	}
 }
 
-func getSubscriptionIdAndPath(connectedDataList *ConnectedData, protocol string, serviceId uint32) (string, string) {
+func getCancelData(connectedDataList *ConnectedData, protocol string, serviceId uint32) (string, string, string) {
 	if connectedDataList == nil {
-		fmt.Printf("getSubscriptionIdAndPath: connectedDataList is empty for protocol=%s, serviceId=%d\n", protocol, serviceId) // should not be possible...
-		return "", ""
+		fmt.Printf("getCancelData: connectedDataList is empty for protocol=%s, serviceId=%d\n", protocol, serviceId)
+		return "", "", ""
 	} else {
 		iterator := connectedDataList
 		for iterator != nil {
@@ -942,7 +947,7 @@ func getSubscriptionIdAndPath(connectedDataList *ConnectedData, protocol string,
 				activeServiceIterator := (*iterator).activeService
 				for activeServiceIterator != nil {
 					if (*activeServiceIterator).serviceId == serviceId {
-						return (*activeServiceIterator).messageId, (*activeServiceIterator).path
+						return (*activeServiceIterator).messageId, (*activeServiceIterator).path, (*activeServiceIterator).value
 					}
 					activeServiceIterator = (*activeServiceIterator).next
 				}
@@ -950,10 +955,11 @@ func getSubscriptionIdAndPath(connectedDataList *ConnectedData, protocol string,
 			iterator = (*iterator).next
 		}
 	}
-	return "", ""
+	fmt.Printf("getCancelData: no match for protocol=%s, serviceId=%d\n", protocol, serviceId)
+	return "", "", ""
 }
 
-func saveReturnHandle(connectedDataList **ConnectedData, protocol string, path string, serviceId uint32, requestId string, responseChan chan map[string]interface{}, callback interface{}) bool {
+func saveReturnHandle(connectedDataList **ConnectedData, protocol string, path string, cancelValue string, serviceId uint32, requestId string, responseChan chan map[string]interface{}, callback interface{}) bool {
 	if *connectedDataList == nil {
 		return false
 	} else {
@@ -965,6 +971,7 @@ func saveReturnHandle(connectedDataList **ConnectedData, protocol string, path s
 				if *activeServiceIterator == nil {
 					var activeService ActiveService
 					activeService.path = path
+					activeService.value = cancelValue
 					activeService.messageId = requestId
 					activeService.serviceId = serviceId
 					activeService.callback = callback
@@ -975,6 +982,7 @@ func saveReturnHandle(connectedDataList **ConnectedData, protocol string, path s
 					if (*activeServiceIterator).next == nil {
 						var activeService ActiveService
 						activeService.path = path
+						activeService.value = cancelValue
 						activeService.messageId = requestId
 						activeService.serviceId = serviceId
 						activeService.callback = callback
