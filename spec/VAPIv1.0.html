@@ -308,7 +308,7 @@ It could then also be used by service end points to access vehicle signals, if a
               Status: ProcedureStatus,
               Error: *ErrorData,
               VehicleId: uint32,
-              Protocol: []string
+              Protocol: string[]
             }
             </code></pre>
             Struct member descriptions:<br>
@@ -650,7 +650,7 @@ It could then also be used by service end points to access vehicle signals, if a
             {
               Status: ProcedureStatus,
               Error: *ErrorData,
-              Service: []ServiceSignature
+              Service: ServiceSignature[]
             }
             </code></pre>
             Struct member descriptions:<br>
@@ -1006,7 +1006,7 @@ It could then also be used by service end points to access vehicle signals, if a
             {
               Status: ProcedureStatus,
               Error: *ErrorData,
-              Data: []DataContainer
+              Data: DataContainer[]
             }
             </code></pre>
             Struct member descriptions:<br>
@@ -1159,7 +1159,7 @@ It could then also be used by service end points to access vehicle signals, if a
             {
               Status: ProcedureStatus,
               Error: *ErrorData,
-              Data: []DataContainer,
+              Data: DataContainer[],
               ServiceId: uint32
             }
             </code></pre>
@@ -1429,6 +1429,99 @@ It could then also be used by service end points to access vehicle signals, if a
         </section>
     </section>
 
+    <section id="configure-seat-procedure">
+      <h2>ConfigureSeat</h2>
+        <p>Move a seat to configured positions.</p>
+
+        <p>
+        This procedure moves a seat to the configuration defined by each movement type and position in the input.
+        Not supported movement ypes in the input will be ignored.
+        A client can terminate the service execution by invokation of <a href="#cancel-service-procedure">CancelService</a>.
+        The service will automatically terminate an ongoing callback session when either all supported movements reach the
+        positions provided in the input, or if an error occurs.
+        </p>
+
+        <section id="configure-seat-signature">
+          <h2>Signature</h2>
+          <pre><code>
+          ConfigureSeat(vehicleId: uint32, seatId: MatrixId, configuration: MovementConfig[], stCredentials: string, callback: *fcn(ConfigureSeatOutput): ConfigureSeatOutput
+          </code></pre>
+        </section>
+
+        <section id="configure-seat-parameters">
+          <h2>Parameters</h2>
+          <ul class="param-list">
+            <li>
+              <strong>vehicleId</strong> (<span class="type">uint32</span>)
+              <br>
+              A reference to the vehicle that was obtained in a previous <a href="#getvehicle-procedure">GetVehicle</a>.
+            </li>
+            <li>
+              <strong>seatId</strong> (<span class="type"><a href="#matrix-id">MatrixId</a></span>)
+              <br>
+              The seat Id identifies one of the seats in the vehicle.
+            </li>
+            <li>
+              <strong>configuration</strong> (<span class="type">MovementConfig array</span>)
+              <br>
+              Each of the seat configuration <a href="#movement-config">MovementConfig</a> array elements define a movement type and position.
+              The sum of all movements position leads to the desired seat configuration.
+              If a seat movement type is not supported it is ignored and reported as Unconfigured in the response.
+            </li>
+            <li>
+              <strong>stCredentials</strong> (<span class="type">string</span>)
+              <br>
+              The short term credentials that was obtained by a call to <a href="#get-st-credentials-procedure">GetStCredentials</a>.
+            </li>
+            <li>
+              <strong>callback</strong> (<span class="type">*fcn(ConfigureSeatOutput)</span>)
+              <br>
+              A pointer to a callback function that is called if an event message gets issued by the service.
+              If set to nil callbacks will not be issued.
+            </li>
+          </ul>
+        </section>
+
+        <section id="configure-seat-returns">
+          <h2>Returns</h2>
+            <span class="type"><code>ConfigureSeatOutput</code></span>
+            <br>
+            A struct containing the output data from the ConfigureSeat procedure.
+            This shall be returned both synchronously on the procedure  call and asynchronously on event trigger conditions.
+            <pre><code>
+            {
+              Status: ProcedureStatus,
+              Error: *ErrorData,
+              Configured: MovementConfig[],
+              Unconfigured: string[],
+              ServiceId: uint32
+            }
+            </code></pre>
+            Struct member descriptions:<br>
+            <a href="#procedure-status">Status: </a>The status of the latest service call to it.<br>
+            <a href="#error-data">Error: </a>Error information for the latest service call, if error occurred.<br>
+            <a href="#movement-config">Configured: </a>The current positions of the seat movements that were moved by the configuration.<br>
+            Unconfigured: If the configuration input contained unsupported movement types then this array contains the names of these.<br>
+            ServiceId: A reference to the service session that the client may use to call <a href="#cancel-service-procedure">CancelService</a>.
+            It may be set to zero in which case it is invalid.
+        </section>
+
+        <section id="configure-seat-error">
+          <h2>Error</h2>
+          <ul class="error-list">
+            <li>
+            If Status is set to FAILED then Error must be available and populated with error data, else the pointer to Error shall be set to nil.
+            </li>
+            <li>
+            Error data shall conform to the error data definitions in [[VISS]] for signals.
+            </li>
+            <li>
+             The Configured, Unconfigured and ServiceId parameters are invalid if Status is set to FAILED.
+            </li>
+          </ul>
+        </section>
+    </section>
+
     <section id="activate-massage-procedure">
       <h2>ActivateMassage</h2>
         <p>Performs all supported massage types.</p>
@@ -1595,7 +1688,7 @@ It could then also be used by service end points to access vehicle signals, if a
         <pre><code>
         struct {
             Path: string,
-            SignalData: []DataPoint
+            SignalData: DataPoint[]
         }
         </code></pre>
       </section>
@@ -1669,17 +1762,17 @@ It could then also be used by service end points to access vehicle signals, if a
 
         ColumnData: struct {
             Name: string,
-            MovementSupport: []SupportData,
-            MassageSupport: []SupportData
+            MovementSupport: SupportData[],
+            MassageSupport: SupportData[]
         }
 
         RowDef: struct {
         {
             RowName: string,
-            Column: []ColumnData
+            Column: ColumnData[]
         }
 
-        RaggedMatrix: []RowDef
+        RaggedMatrix: RowDef[]
         </code></pre>
       </section>
 
@@ -1726,6 +1819,16 @@ It could then also be used by service end points to access vehicle signals, if a
             </li>
           </ul>
           Movement types not covered by the list may be added in an implementation.
+      </section>
+
+      <section id="movement-config">
+        <h2>MovementConfig</h2>
+        A struct containing a seat movement type and the position it should be moved to.
+        <pre><code>
+        struct {
+            MovementType: string,
+            Position: Percentage
+        }
       </section>
 
       <section id="service-signature">
