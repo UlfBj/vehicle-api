@@ -45,6 +45,14 @@ func moveSeatOutUnpack(moveSeatOut VapiViss.MoveSeatOutput) {
 	}
 }
 
+func seatConfigOutUnpack(configureSeatOut VapiViss.ConfigureSeatOutput) {
+	fmt.Printf("ConfigureSeat:")
+	showServiceStatus(configureSeatOut.Status, configureSeatOut.Error)
+	for i := 0; i < len(configureSeatOut.Configured); i++ {
+		fmt.Printf("Configured:%s, Position:%f\n", configureSeatOut.Configured[i].MovementType, configureSeatOut.Configured[i].Position)
+	}
+}
+
 func massageOutUnpack(massageOut VapiViss.MassageOutput) {
 	fmt.Printf("\nMassage execution status:\n")
 	showServiceStatus(massageOut.Status, massageOut.Error)
@@ -157,51 +165,25 @@ func main() {
 	cancelServiceOut := VapiViss.CancelService(vehicle1, moveSeatOut.ServiceId)
 	showServiceStatus(cancelServiceOut.Status,cancelServiceOut.Error)
 
-	fmt.Printf("ActivateMassage(vehicle1, seatId, ROLL, 50, 10, '', massageOutUnpack)\n")
-	massageOut := VapiViss.ActivateMassage(vehicle1, seatId, VapiViss.ROLL, 50, 10, "", massageOutUnpack)
+	seatConfig := make([]VapiViss.SeatConfig, 2)
+	seatConfig[0].MovementType = VapiViss.LONGITUDINAL
+	seatConfig[0].Position = 10
+	seatConfig[1].MovementType = VapiViss.LUMBAR
+	seatConfig[1].Position = 50
+	fmt.Printf("ConfigureSeat(vehicle1, seatId, seatConfig, '', seatConfigOutUnpack)\n")
+	configSeatOut := VapiViss.ConfigureSeat(vehicle1, seatId, seatConfig, "", seatConfigOutUnpack)
+	seatConfigOutUnpack(configSeatOut)
+
+	fmt.Printf("Sleep for 12 secs to let seat configuration execution to finish\n")
+	time.Sleep(12 * time.Second)
+
+	fmt.Printf("ActivateMassage(vehicle1, seatId, ROLL, 50, 5, '', massageOutUnpack)\n")
+	massageOut := VapiViss.ActivateMassage(vehicle1, seatId, VapiViss.ROLL, 50, 5, "", massageOutUnpack)
 	massageOutUnpack(massageOut)
 
-	fmt.Printf("Sleep for 15 secs to let massage execution duration=10s to finish\n")
-	time.Sleep(15 * time.Second)
+	fmt.Printf("Sleep for 7 secs to let massage execution duration=5s to finish\n")
+	time.Sleep(7 * time.Second)
 
-/*	fmt.Printf(`Get(vehicle1, %s, %s, "")`+"\n", longitudinalPath, filter)
-	for i := 0; i < 10; i++ {
-		getOut = VapiViss.Get(vehicle1, longitudinalPath, filter, "")
-		showServiceStatus(getOut.Status,getOut.Error)
-		if getOut.Status == VapiViss.SUCCESSFUL {
-			for i := 0; i<len(getOut.Data); i++ {
-				fmt.Printf("Path=%s\n", getOut.Data[i].Path)
-				for j := 0; j<len(getOut.Data[i].Dp); j++ {
-					fmt.Printf("  Value=%s Ts=%s\n", getOut.Data[i].Dp[j].Value, getOut.Data[i].Dp[j].Timestamp)
-				}
-			}
-		} else {
-			fmt.Printf("Get() call to vehicle id =%s failed. Error reason = %s.\n", vehicleGuid1, getOut.Error.Reason)
-		}
-		time.Sleep(1 * time.Second)
-	}*/
-
-//	time.Sleep(20 * time.Second)  //wait to check if unsub leads to ws tear down
-
-/*	path = "Vehicle.Cabin.Seat.Row1.DriverSide.Position"
-	VapiViss.SelectProtocol(vehicle2, protocol2)
-	fmt.Printf(`Get(vehicle2, %s, %s, "")`+"\n", path, filter)
-	getOut = VapiViss.Get(vehicle2, path, filter, "")
-	showServiceStatus(getOut.Status,getOut.Error)
-	if getOut.Status == VapiViss.SUCCESSFUL {
-		for i := 0; i<len(getOut.Data); i++ {
-			fmt.Printf("Path=%s\n", getOut.Data[i].Path)
-			for j := 0; j<len(getOut.Data[i].Dp); j++ {
-				fmt.Printf("  Value=%s Ts=%s\n", getOut.Data[i].Dp[j].Value, getOut.Data[i].Dp[j].Timestamp)
-			}
-		}
-	} else {
-		fmt.Printf("Get() call to vehicle id =%s failed. Error reason = %s.\n", vehicleGuid1, getOut.Error.Reason)
-	}
-
-	fmt.Printf("Disconnect(vehicle2, %s)\n", protocol2)
-	VapiViss.Disconnect(vehicle2, protocol2)
-//	VapiViss.Disconnect(vehicle3, protocol3)*/
 	fmt.Printf("Disconnect(vehicle1, %s)\n", protocol)
 	disconnectOut := VapiViss.Disconnect(vehicle1, protocol)
 	showServiceStatus(disconnectOut.Status, disconnectOut.Error)

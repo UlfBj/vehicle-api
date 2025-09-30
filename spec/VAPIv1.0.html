@@ -1444,7 +1444,7 @@ It could then also be used by service end points to access vehicle signals, if a
         <section id="configure-seat-signature">
           <h2>Signature</h2>
           <pre><code>
-          ConfigureSeat(vehicleId: uint32, seatId: MatrixId, configuration: MovementConfig[], stCredentials: string, callback: *fcn(ConfigureSeatOutput): ConfigureSeatOutput
+          ConfigureSeat(vehicleId: uint32, seatId: MatrixId, configuration: SeatConfig[], stCredentials: string, callback: *fcn(ConfigureSeatOutput): ConfigureSeatOutput
           </code></pre>
         </section>
 
@@ -1462,9 +1462,9 @@ It could then also be used by service end points to access vehicle signals, if a
               The seat Id identifies one of the seats in the vehicle.
             </li>
             <li>
-              <strong>configuration</strong> (<span class="type">MovementConfig array</span>)
+              <strong>configuration</strong> (<span class="type">SeatConfig array</span>)
               <br>
-              Each of the seat configuration <a href="#movement-config">MovementConfig</a> array elements define a movement type and position.
+              Each of the seat configuration <a href="#movement-config">SeatConfig</a> array elements define a movement type and position.
               The sum of all movements position leads to the desired seat configuration.
               If a seat movement type is not supported it is ignored and reported as Unconfigured in the response.
             </li>
@@ -1492,7 +1492,7 @@ It could then also be used by service end points to access vehicle signals, if a
             {
               Status: ProcedureStatus,
               Error: *ErrorData,
-              Configured: MovementConfig[],
+              Configured: SeatConfig[],
               Unconfigured: string[],
               ServiceId: uint32
             }
@@ -1822,7 +1822,7 @@ It could then also be used by service end points to access vehicle signals, if a
       </section>
 
       <section id="movement-config">
-        <h2>MovementConfig</h2>
+        <h2>SeatConfig</h2>
         A struct containing a seat movement type and the position it should be moved to.
         <pre><code>
         struct {

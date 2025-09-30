@@ -35,6 +35,12 @@ type MatrixId struct {
 	RowName string
 	ColumnName string
 }
+
+type SeatConfig struct {
+	MovementType string
+	Position Percentage
+}
+
 type ProcedureStatus int8
 const (
 	ONGOING = 1     // in execution of latest call
@@ -54,11 +60,11 @@ type ConnectivityData struct {
 }
 
 type ActiveService struct {
+	name string
 	serviceId uint32
 	messageId string
-	callback interface{}
-	path string
-	value string
+	messageChan chan map[string]interface{}
+	cancelChan chan string
 	next *ActiveService
 }
 
@@ -67,7 +73,6 @@ type ConnectedData struct {
 	socket string
 	clientTopic string
 	connHandle interface{}  //*websocket.Conn, *grpc....
-	responseChan chan map[string]interface{}
 	activeService *ActiveService
 	next *ConnectedData
 }
@@ -76,8 +81,8 @@ type VehicleConnection struct {
 	vehicleGuid string
 	vehicleId VehicleHandle
 	ipAddress string
-	connectivityData []ConnectivityData
-	connectedProtocol string
+	connectivitySupport []ConnectivityData
+	selectedProtocol string
 	connectedData *ConnectedData
 	next *VehicleConnection
 }
@@ -141,7 +146,7 @@ func GetVehicle(vehicleGuid string) GetVehicleOutput {
 	var vehConn VehicleConnection
 	var out GetVehicleOutput
 	vehConn.vehicleGuid = vehicleGuid
-	vehConn.connectivityData, vehConn.ipAddress = getSupportedConnectivity(vehicleGuid)
+	vehConn.connectivitySupport, vehConn.ipAddress = getSupportedConnectivity(vehicleGuid)
 	if vehConn.ipAddress == "" {
 		out.Status = FAILED
 		out.Error = getErrorObject(400, "invalid_data", "unknown vehicle")
@@ -150,9 +155,9 @@ func GetVehicle(vehicleGuid string) GetVehicleOutput {
 	vehConn.vehicleId = VehicleHandle(generateRandomUint32())
 	addVehicleConnection(&vehConn)
 	out.VehicleId = vehConn.vehicleId
-	out.Protocol = make([]string, len(vehConn.connectivityData))
-	for i := 0; i< len(vehConn.connectivityData); i++ {
-		out.Protocol[i] = vehConn.connectivityData[i].Protocol
+	out.Protocol = make([]string, len(vehConn.connectivitySupport))
+	for i := 0; i< len(vehConn.connectivitySupport); i++ {
+		out.Protocol[i] = vehConn.connectivitySupport[i].Protocol
 	}
 	out.Status = SUCCESSFUL
 	if eventChan == nil {
@@ -190,8 +195,8 @@ func Connect(vehicleId VehicleHandle, protocol string, clientCredentials string)
 		return out
 	}
 	matchingIndex := -1
-	for i := 0; i < len(vehConn.connectivityData); i++ {
-		if vehConn.connectivityData[i].Protocol == protocol {
+	for i := 0; i < len(vehConn.connectivitySupport); i++ {
+		if vehConn.connectivitySupport[i].Protocol == protocol {
 			matchingIndex = i
 			break
 		}
@@ -199,15 +204,15 @@ func Connect(vehicleId VehicleHandle, protocol string, clientCredentials string)
 	if matchingIndex >= 0 {
 		var connectedData ConnectedData
 		connectedData.protocol = protocol
-		connectedData.socket = vehConn.ipAddress + ":" + vehConn.connectivityData[matchingIndex].PortNo
+		connectedData.socket = vehConn.ipAddress + ":" + vehConn.connectivitySupport[matchingIndex].PortNo
 		if strings.Contains(protocol, "mqtt") || strings.Contains(protocol, "MQTT") {
 			connectedData.clientTopic = generateRandomString()  //needed for VISSv3.0-mqtt
 		}
 		connectedData.connHandle = connectToVehicle(protocol, connectedData.socket)
 		if connectedData.connHandle != nil {
 			addConnectedData(&(vehConn.connectedData), &connectedData)
-			vehConn.connectedProtocol = protocol
-			go receiveMessageWs(vehicleId, connectedData.connHandle.(*websocket.Conn), eventChan) //alla protokollen ska ha samma eventChan
+			vehConn.selectedProtocol = protocol
+			go initReceiveMessage(vehConn, protocol)
 		} else {
 			out.Error = getErrorObject(502, "bad_gateway", "Protocol not supported")
 			out.Status = FAILED
@@ -223,25 +228,19 @@ func Disconnect(vehicleId VehicleHandle, protocol string) GeneralOutput {
 	var out GeneralOutput
 	vehConn := getVehicleConnection(vehicleId)
 	if vehConn == nil {
-		out.Error = getErrorObject(400, "invalid_data", "Protocol not connected")
+		out.Error = getErrorObject(400, "invalid_data", "Vehicle not connected")
 		out.Status = FAILED
 		return out
 	}
-	// TODO: gör unsubscribe på activa services??
-	switch protocol {
-		case "VISSv3.0-wss": fallthrough
-		case "VISSv3.0-ws":
-			getConnHandle(vehConn.connectedData, protocol).(*websocket.Conn).Close()
-		default:
-			fmt.Printf("Disconnect: protocol not supported\n")
-			out.Error = getErrorObject(400, "invalid_data", "Protocol not supported")
-			out.Status = FAILED
-			return out
+	for {
+		serviceId := getActiveServiceId(vehConn.connectedData, protocol)
+//fmt.Printf("Disconnect: serviceId = %d\n", serviceId)
+		if serviceId == 0 {
+			break
+		}
+		Unsubscribe(vehicleId, serviceId)
+		removeActiveService(&vehConn.connectedData, protocol, serviceId)
 	}
-	responseChan := getResponseChan(vehConn.connectedData, protocol)
-	m := make(map[string]interface{})
-	m["error"] = "terminate"   // not read by receiveMessageXX anyway ...
-	responseChan <- m
 	removeConnection(&vehConn, protocol)
 	out.Status = SUCCESSFUL
 	return out
@@ -251,10 +250,10 @@ func SelectProtocol(vehicleId VehicleHandle, protocol string) GeneralOutput {
 	var out GeneralOutput
 	vehConn := getVehicleConnection(vehicleId)
 	if vehConn != nil {
-		for i := 0; i<len(vehConn.connectivityData); i++ {
-			if vehConn.connectivityData[i].Protocol == protocol {
+		for i := 0; i<len(vehConn.connectivitySupport); i++ {
+			if vehConn.connectivitySupport[i].Protocol == protocol {
 				if getConnHandle(vehConn.connectedData, protocol) != nil {
-					vehConn.connectedProtocol = protocol
+					vehConn.selectedProtocol = protocol
 					out.Status = SUCCESSFUL
 					return out
 				}
@@ -279,23 +278,33 @@ func GetMetadata(vehicleId VehicleHandle, path string, stCredentials string) Get
 	if stCredentials != "" {
 		stCredParam = `, "authorization":"` + stCredentials + "\""
 	}
+	serviceId := generateRandomUint32()
+	requestId := generateRandomString()
+	messageChan := addActiveService(&vehConn.connectedData, vehConn.selectedProtocol, serviceId, requestId)
+	clientMessage := `{"action":"get", "path":"` + path + filterParam + stCredParam + `, "requestId":"` + requestId + `"}`
+//	clientMessage := `{"action":"get", "path":"` + path + "\"" + filterParam + stCredParam + `, "requestId":"` + requestId + `"}`
+	sendMessage(vehConn, "", clientMessage)
+	responseMap := <- messageChan
+	removeActiveService(&vehConn.connectedData, vehConn.selectedProtocol, serviceId)
+	return reformatOutput(responseMap, "getmetadata").(GetMetadataOutput)
+/*	return reformatOutput(responseMap, "get").(GetOutput)
 	requestId := generateRandomString()
 	clientMessage := `{"action":"get", "path":"` + path + filterParam + stCredParam + `, "requestId":"` + requestId + `"}`
 	responseChan := make(chan map[string]interface{})
-	ok := saveReturnHandle(&vehConn.connectedData, vehConn.connectedProtocol, "", "", 0, requestId, responseChan, nil)
+	ok := saveReturnHandle(&vehConn.connectedData, vehConn.selectedProtocol, "", "", 0, requestId, responseChan, nil)
 	if !ok {
 		var out GetMetadataOutput
 		out.Status = FAILED
 		out.Error = getErrorObject(400, "invalid_data", "Vehicle connection is lost")
 		return out
 	}
-	sendMessage(vehConn, clientMessage)
+	sendMessage(vehConn, "", clientMessage)
 	var responseMap map[string]interface{}
 	select {
 		case responseMap = <- responseChan:  //wait for response from receiveMessage
 		
 	}
-	return reformatOutput(responseMap, "getmetadata").(GetMetadataOutput)
+	return reformatOutput(responseMap, "getmetadata").(GetMetadataOutput)*/
 }
 
 func ServiceInquiry(vehicleId VehicleHandle) ServiceInquiryOutput {
@@ -341,29 +350,20 @@ func Set(vehicleId VehicleHandle, path string, value string, stCredentials strin
 	if stCredentials != "" {
 		stCredParam = `, "authorization":"` + stCredentials + "\""
 	}
+	serviceId := generateRandomUint32()
 	requestId := generateRandomString()
+	messageChan := addActiveService(&vehConn.connectedData, vehConn.selectedProtocol, serviceId, requestId)
 	clientMessage := `{"action":"set", "path":"` + path  + `", "value":"` + value + "\"" + stCredParam + `, "requestId":"` + requestId + `"}`
-	responseChan := make(chan map[string]interface{})
-	ok := saveReturnHandle(&vehConn.connectedData, vehConn.connectedProtocol, "", "", 0, requestId, responseChan, nil)
-	if !ok {
-		var out GeneralOutput
-		out.Status = FAILED
-		out.Error = getErrorObject(400, "invalid_data", "Vehicle connection is lost")
-		return out
-	}
-	sendMessage(vehConn, clientMessage)
-	var responseMap map[string]interface{}
-	select {
-		case responseMap = <- responseChan:  //wait for response from receiveMessage
-		
-	}
+	sendMessage(vehConn, "", clientMessage)
+	responseMap := <- messageChan
+	removeActiveService(&vehConn.connectedData, vehConn.selectedProtocol, serviceId)
 	return reformatOutput(responseMap, "set").(GeneralOutput)
 }
 
 func Get(vehicleId VehicleHandle, path string, filter string, stCredentials string) GetOutput {
+	var out GetOutput
 	vehConn := getVehicleConnection(vehicleId)
 	if vehConn == nil {
-		var out GetOutput
 		out.Status = FAILED
 		out.Error = getErrorObject(400, "invalid_data", "Vehicle is not connected")
 		return out
@@ -376,22 +376,13 @@ func Get(vehicleId VehicleHandle, path string, filter string, stCredentials stri
 	if stCredentials != "" {
 		stCredParam = `, "authorization":"` + stCredentials + "\""
 	}
+	serviceId := generateRandomUint32()
 	requestId := generateRandomString()
+	messageChan := addActiveService(&vehConn.connectedData, vehConn.selectedProtocol, serviceId, requestId)
 	clientMessage := `{"action":"get", "path":"` + path + "\"" + filterParam + stCredParam + `, "requestId":"` + requestId + `"}`
-	responseChan := make(chan map[string]interface{})
-	ok := saveReturnHandle(&vehConn.connectedData, vehConn.connectedProtocol, "", "", 0, requestId, responseChan, nil)
-	if !ok {
-		var out GetOutput
-		out.Status = FAILED
-		out.Error = getErrorObject(400, "invalid_data", "Vehicle connection is lost")
-		return out
-	}
-	sendMessage(vehConn, clientMessage)
-	var responseMap map[string]interface{}
-	select {
-		case responseMap = <- responseChan:  //wait for response from receiveMessage
-		
-	}
+	sendMessage(vehConn, "", clientMessage)
+	responseMap := <- messageChan
+	removeActiveService(&vehConn.connectedData, vehConn.selectedProtocol, serviceId)
 	return reformatOutput(responseMap, "get").(GetOutput)
 }
 
@@ -401,9 +392,9 @@ func Subscribe(vehicleId VehicleHandle, path string, filter string, stCredential
 }
 
 func subscribeCore(vehicleId VehicleHandle, path string, cancelValue string, filter string, stCredentials string, serviceId uint32, callback func(SubscribeOutput)) SubscribeOutput {
+	var out SubscribeOutput
 	vehConn := getVehicleConnection(vehicleId)
 	if vehConn == nil {
-		var out SubscribeOutput
 		out.Status = FAILED
 		out.Error = getErrorObject(400, "invalid_data", "Vehicle is not connected")
 		return out
@@ -417,23 +408,43 @@ func subscribeCore(vehicleId VehicleHandle, path string, cancelValue string, fil
 		stCredParam = `, "authorization":"` + stCredentials + "\""
 	}
 	requestId := generateRandomString()
-	clientMessage := `{"action":"subscribe", "path":"` + path + "\"" + filterParam + stCredParam + `, "requestId":"` + requestId + `"}`
-	responseChan := make(chan map[string]interface{})
-	ok := saveReturnHandle(&vehConn.connectedData, vehConn.connectedProtocol, path, cancelValue, serviceId, requestId, responseChan, callback)
+	messageChan := addActiveService(&vehConn.connectedData, vehConn.selectedProtocol, serviceId, requestId)
+	message := `{"action":"subscribe", "path":"` + path + "\"" + filterParam + stCredParam + `, "requestId":"` + requestId + `"}`
+	sendMessage(vehConn, "", message)
+	messageMap := <- messageChan
+	if messageMap["error"] != nil {
+		removeActiveService(&vehConn.connectedData, vehConn.selectedProtocol, serviceId)
+		return reformatOutput(messageMap, "subscribe").(SubscribeOutput)
+	}
+	cancelChan := make(chan string)
+	ok := saveCancelHandle(&vehConn.connectedData, vehConn.selectedProtocol, serviceId, messageMap["subscriptionId"].(string), cancelChan)
 	if !ok {
-		var out SubscribeOutput
+		removeActiveService(&vehConn.connectedData, vehConn.selectedProtocol, serviceId)
 		out.Status = FAILED
-		out.Error = getErrorObject(400, "invalid_data", "Vehicle connection is lost")
+		out.Error = getErrorObject(502, "bad_gateway", "Server internal error")
 		return out
 	}
-	sendMessage(vehConn, clientMessage)
-	var responseMap map[string]interface{}
-	select {
-		case responseMap = <- responseChan:  //wait for response from receiveMessage
-		
-	}
-	responseMap["serviceId"] = serviceId
-	return reformatOutput(responseMap, "subscribe").(SubscribeOutput)
+	go func() {
+		for {
+			select {
+			case messageMap = <- messageChan:
+			messageMap["serviceId"] = serviceId
+			out := reformatOutput(messageMap, "subscribe").(SubscribeOutput)
+			callback(out)
+			if messageMap["error"] != nil {
+				removeActiveService(&vehConn.connectedData, vehConn.selectedProtocol, serviceId)
+				return
+			}
+			case <- cancelChan:
+				removeActiveService(&vehConn.connectedData, vehConn.selectedProtocol, serviceId)
+				return
+			}
+		}
+	}()
+	out.Status = SUCCESSFUL
+	out.Data = nil
+	out.ServiceId = serviceId
+	return out
 }
 
 func Unsubscribe(vehicleId VehicleHandle, serviceId uint32) GeneralOutput {
@@ -444,36 +455,30 @@ func Unsubscribe(vehicleId VehicleHandle, serviceId uint32) GeneralOutput {
 		out.Error = getErrorObject(400, "invalid_data", "Vehicle is not connected")
 		return out
 	}
-	subscriptionId, _, _ := getCancelData(vehConn.connectedData, vehConn.connectedProtocol, serviceId)
+	protocol := getProtocol(&vehConn.connectedData, serviceId)
+	subscriptionId := getCancelData(vehConn.connectedData, protocol, serviceId)
+	removeActiveService(&vehConn.connectedData, protocol, serviceId)
 	requestId := generateRandomString()
 	serviceId = generateRandomUint32()
 	clientMessage := `{"action":"unsubscribe", "subscriptionId":"` + subscriptionId + `", "requestId":"` + requestId + `"}`
-	responseChan := make(chan map[string]interface{})
-	ok := saveReturnHandle(&vehConn.connectedData, vehConn.connectedProtocol, "", "", serviceId, requestId, responseChan, nil)
-	if !ok {
-		var out GeneralOutput
-		out.Status = FAILED
-		out.Error = getErrorObject(400, "invalid_data", "Vehicle connection is lost")
-		return out
-	}
-	sendMessage(vehConn, clientMessage)
-	var responseMap map[string]interface{}
-	select {
-		case responseMap = <- responseChan:  //wait for response from receiveMessage
-		
-	}
+	responseChan := addActiveService(&vehConn.connectedData, protocol, serviceId, requestId)
+	sendMessage(vehConn, "", clientMessage)
+	responseMap := <- responseChan
+	removeActiveService(&vehConn.connectedData, protocol, serviceId)
 	return reformatOutput(responseMap, "unsubscribe").(GeneralOutput)
 }
 
 func CancelService(vehicleId VehicleHandle, serviceId uint32) GeneralOutput {
+	var out GeneralOutput
 	vehConn := getVehicleConnection(vehicleId)
 	if vehConn == nil {
-		var out GeneralOutput
 		out.Status = FAILED
 		out.Error = getErrorObject(400, "invalid_data", "Vehicle is not connected")
 		return out
 	}
-	_, path, value := getCancelData(vehConn.connectedData, vehConn.connectedProtocol, serviceId)
+	Unsubscribe(vehicleId, serviceId)
+//	removeActiveService(&vehConn.connectedData, vehConn.selectedProtocol, serviceId)
+/*	subscriptionId := getCancelData(vehConn.connectedData, vehConn.selectedProtocol, serviceId)
 	if len(value) == 0 {
 		getOut := Get(vehicleId, path, "", "")
 		if getOut.Status == SUCCESSFUL {
@@ -488,10 +493,10 @@ func CancelService(vehicleId VehicleHandle, serviceId uint32) GeneralOutput {
 				return GeneralOutput{SUCCESSFUL, nil}
 			}
 		}
-	}
-	var out GeneralOutput
-	out.Status = FAILED
-	out.Error = getErrorObject(502, "bad_gateway", "Cancelling of service failed")
+	}*/
+//	var out GeneralOutput
+	out.Status = SUCCESSFUL
+//	out.Error = getErrorObject(502, "bad_gateway", "Cancelling of service failed")
 	return out
 }
 
@@ -560,6 +565,14 @@ type MoveSeatOutput struct {
 	ServiceId uint32
 }
 
+type ConfigureSeatOutput struct {
+	Status ProcedureStatus
+	Error *ErrorData
+	Configured []SeatConfig
+	Unconfigured []string
+	ServiceId uint32
+}
+
 type SupportData struct {
 	Name string
 	Description string
@@ -587,6 +600,12 @@ type GetPropertiesSeatingOutput struct {
 func MoveSeat(vehicleId VehicleHandle, seatId MatrixId, movementType string, position Percentage, stCredentials string, callback func(MoveSeatOutput)) MoveSeatOutput {
 	var out MoveSeatOutput
 	var actuatorPath string
+	vehConn := getVehicleConnection(vehicleId)
+	if vehConn == nil {
+		out.Status = FAILED
+		out.Error = getErrorObject(400, "invalid_data", "Vehicle is not connected")
+		return out
+	}
 	if position < 0 || position > 100 {
 		out.Error = getErrorObject(400, "invalid_data", "position out of range")
 		out.Status = FAILED
@@ -597,20 +616,28 @@ func MoveSeat(vehicleId VehicleHandle, seatId MatrixId, movementType string, pos
 		out.Status = FAILED
 		return out
 	}
+	var A, B Percentage
 	switch movementType {
 		case LONGITUDINAL:
 			actuatorPath = getSeatPositionedPath("Vehicle.Cabin.Seat.RowX.ColumnY.Position", seatId)
-			position = 3 * position  //in millimeter, 300 mm dynamic range??
+			A = 3
+			B = 0
+//			position = 3 * position  //in millimeter, 300 mm dynamic range??
 		case LUMBAR:
+			A = 1
+			B = 0
 			actuatorPath = getSeatPositionedPath("Vehicle.Cabin.Seat.RowX.ColumnY.Backrest.Lumbar.Support", seatId)
 		case BACKREST:
+			A = 0.9
+			B = -45
 			actuatorPath = getSeatPositionedPath("Vehicle.Cabin.Seat.RowX.ColumnY.Backrest.Recline", seatId)
-			position = 0.9 * position - 45 //transform position to degrees; f(x) = 0.9*x - 45 f(0)=-45; f(100)=45 ??
+//			position = 0.9 * position - 45 //transform position to degrees; f(x) = 0.9*x - 45 f(0)=-45; f(100)=45 ??
 		default:
 			out.Error = getErrorObject(400, "invalid_data", "unknown movementType")
 			out.Status = FAILED
 			return out
 	}
+	position = A * position + B
 	posStr := strconv.FormatFloat(float64(position), 'f', -1, 32)
 	if movementType == LONGITUDINAL {
 		dotIndex := strings.Index(posStr, ".")
@@ -631,26 +658,130 @@ func MoveSeat(vehicleId VehicleHandle, seatId MatrixId, movementType string, pos
 		return out
 	}
 	currPos, _ := strconv.Atoi(getOut.Data[0].Dp[0].Value)
-	out.Position = Percentage(currPos)
-	out.Status = SUCCESSFUL
-	if callback != nil {
-		serviceId := generateRandomUint32()
-		callbackInterceptor := makeCallbackInterceptor(vehicleId, callback, serviceId, actuatorPath, posStr)
-		filter := `{"variant":"timebased","parameter":{"period":"500"}}`
-		subOut := subscribeCore(vehicleId, actuatorPath, "", filter, stCredentials, serviceId, callbackInterceptor)
-		if subOut.Status == SUCCESSFUL {
-			out.Status = ONGOING
-			out.ServiceId = serviceId
-		} else {
-			out.Status = FAILED
-			out.Error = getErrorObject(400, "invalid_data", "callback init failed")
+	out.Position = (Percentage(currPos)-B)/A
+	out.Status = ONGOING
+/*******/
+	serviceId := generateRandomUint32()
+	out.ServiceId = serviceId
+	requestId := generateRandomString()
+	filter := `{"variant":"timebased","parameter":{"period":"500"}}`
+	filterParam := `, "filter":` + filter
+	stCredParam := ""
+	if stCredentials != "" {
+		stCredParam = `, "authorization":"` + stCredentials + "\""
+	}
+	message := `{"action":"subscribe", "path":"` + actuatorPath + "\"" + filterParam + stCredParam + `, "requestId":"` + requestId + `"}`
+	messageChan := addActiveService(&vehConn.connectedData, vehConn.selectedProtocol, serviceId, requestId)
+	sendMessage(vehConn, "", message)
+	messageMap := <- messageChan
+	if messageMap["error"] != nil {
+		removeActiveService(&vehConn.connectedData, vehConn.selectedProtocol, serviceId)
+		out.Status = FAILED
+		out.Error = getErrorInfo(messageMap["error"].(map[string]interface{}))
+		return out
+	}
+	cancelChan := make(chan string)
+	ok := saveCancelHandle(&vehConn.connectedData, vehConn.selectedProtocol, serviceId, messageMap["subscriptionId"].(string), cancelChan)
+	if !ok {
+		removeActiveService(&vehConn.connectedData, vehConn.selectedProtocol, serviceId)
+		out.Status = FAILED
+		out.Error = getErrorObject(502, "bad_gateway", "Server internal error")
+		return out
+	}
+	go func() {
+		for {
+			select {
+			case messageMap = <- messageChan:
+				if messageMap["error"] != nil {
+					out.Status = FAILED
+					out.Error = getErrorInfo(messageMap["error"].(map[string]interface{}))
+				} else {
+					out.Status = ONGOING
+					data := populateData(messageMap["data"])
+					currPos, _ := strconv.Atoi(data[0].Dp[0].Value)
+					out.Position = (Percentage(currPos)-B)/A
+					if out.Position >= 100 {
+						out.Status = SUCCESSFUL
+					}
+				}
+				if callback != nil {
+					callback(out)
+				}
+				if messageMap["error"] != nil || out.Status == SUCCESSFUL {
+					Unsubscribe(vehicleId, serviceId)
+					removeActiveService(&vehConn.connectedData, vehConn.selectedProtocol, serviceId)
+					return
+				}
+			case <- cancelChan:
+//				removeActiveService(&vehConn.connectedData, vehConn.selectedProtocol, serviceId)
+				return
+			}
+		}
+	}()
+	return out
+}
+
+func ConfigureSeat(vehicleId VehicleHandle, seatId MatrixId, configuration []SeatConfig, stCredentials string, callback func(ConfigureSeatOutput)) ConfigureSeatOutput {
+	var out ConfigureSeatOutput
+	vehConn := getVehicleConnection(vehicleId)
+	if vehConn == nil {
+		out.Status = FAILED
+		out.Error = getErrorObject(400, "invalid_data", "Vehicle is not connected")
+		return out
+	}
+	go func() {
+	var out ConfigureSeatOutput
+	out.Status = ONGOING
+	moveOut := make([]MoveSeatOutput, len(configuration))
+	moveSeatCb := func(cbOut MoveSeatOutput) {
+		confIndex := findConfIndex(cbOut.ServiceId, moveOut)
+		if confIndex != -1 {
+			moveOut[confIndex].Status = cbOut.Status
+			moveOut[confIndex].Error = cbOut.Error
+			moveOut[confIndex].Position = cbOut.Position
 		}
 	}
+	for i := 0; i < len(configuration); i++ {
+		if isSupportedMovement(seatId, configuration[i].MovementType) {
+			moveOut[i] = MoveSeat(vehicleId, seatId, configuration[i].MovementType, configuration[i].Position, stCredentials, moveSeatCb)
+			out.Configured = append(out.Configured, configuration[i])
+		} else {
+			out.Unconfigured = append(out.Unconfigured, configuration[i].MovementType)
+		}
+	}
+	done := false
+	for !done {
+		for i :=0; i < len(moveOut); i++ {
+			out.Status = SUCCESSFUL
+			if moveOut[i].Status == FAILED {
+				out.Status = FAILED
+				out.Error = moveOut[i].Error
+				done = true
+				break
+			} else if moveOut[i].Status == ONGOING {
+				out.Status = ONGOING
+				break
+			}
+		}
+		callback(out)
+		if out.Status == SUCCESSFUL{
+			done = true
+		}
+		time.Sleep(1 * time.Second)
+	}
+	}()
+	out.Status = ONGOING
 	return out
 }
 
 func ActivateMassage(vehicleId VehicleHandle, seatId MatrixId, massageType string, intensity Percentage, duration uint32, stCredentials string, callback func(MassageOutput)) MassageOutput {
 	var out MassageOutput
+	vehConn := getVehicleConnection(vehicleId)
+	if vehConn == nil {
+		out.Status = FAILED
+		out.Error = getErrorObject(400, "invalid_data", "Vehicle is not connected")
+		return out
+	}
 	if intensity < 0 || intensity > 100 {
 		out.Error = getErrorObject(400, "invalid_data", "intensity out of range")
 		out.Status = FAILED
@@ -684,7 +815,68 @@ func ActivateMassage(vehicleId VehicleHandle, seatId MatrixId, massageType strin
 		out.Error = setOut.Error
 		return out
 	}
-	if callback != nil {
+/****************/
+	serviceId := generateRandomUint32()
+	out.ServiceId = serviceId
+	requestId := generateRandomString()
+	if duration == 0 || duration > 24 * 3600 {
+		duration = 24 * 3600  //24 hours limit
+	}
+	filter := `{"variant":"timebased","parameter":{"period":"1000"}}`
+	filterParam := `, "filter":` + filter
+	stCredParam := ""
+	if stCredentials != "" {
+		stCredParam = `, "authorization":"` + stCredentials + "\""
+	}
+	message := `{"action":"subscribe", "path":"` + massageOnPath + "\"" + filterParam + stCredParam + `, "requestId":"` + requestId + `"}`
+	messageChan := addActiveService(&vehConn.connectedData, vehConn.selectedProtocol, serviceId, requestId)
+	sendMessage(vehConn, "", message)
+	messageMap := <- messageChan
+	if messageMap["error"] != nil {
+		removeActiveService(&vehConn.connectedData, vehConn.selectedProtocol, serviceId)
+		out.Status = FAILED
+		out.Error = getErrorInfo(messageMap["error"].(map[string]interface{}))
+		return out
+	}
+	cancelChan := make(chan string)
+	ok := saveCancelHandle(&vehConn.connectedData, vehConn.selectedProtocol, serviceId, messageMap["subscriptionId"].(string), cancelChan)
+	if !ok {
+		removeActiveService(&vehConn.connectedData, vehConn.selectedProtocol, serviceId)
+		out.Status = FAILED
+		out.Error = getErrorObject(502, "bad_gateway", "Server internal error")
+		return out
+	}
+	go func() {
+		finalTime := time.Now().Add(time.Duration(float64(duration)*1e9))
+		for {
+			select {
+			case messageMap = <- messageChan:
+				if messageMap["error"] != nil {
+					out.Status = FAILED
+					out.Error = getErrorInfo(messageMap["error"].(map[string]interface{}))
+				} else {
+					out.Status = ONGOING
+					data := populateData(messageMap["data"])
+					massageOn := data[0].Dp[0].Value
+					if massageOn == "false" || time.Now().After(finalTime) {
+						out.Status = SUCCESSFUL
+					}
+				}
+				if callback != nil {
+					callback(out)
+				}
+				if messageMap["error"] != nil || out.Status == SUCCESSFUL {
+					Unsubscribe(vehicleId, serviceId)
+//					removeActiveService(&vehConn.connectedData, vehConn.selectedProtocol, serviceId)
+					return
+				}
+			case <- cancelChan:
+//				removeActiveService(&vehConn.connectedData, vehConn.selectedProtocol, serviceId)
+				return
+			}
+		}
+	}()
+/*	if callback != nil {
 		serviceId := generateRandomUint32()
 		if duration == 0 || duration > 24 * 3600 {
 			duration = 24 * 3600  //24 hours limit
@@ -699,7 +891,7 @@ func ActivateMassage(vehicleId VehicleHandle, seatId MatrixId, massageType strin
 			out.Status = FAILED
 			out.Error = getErrorObject(400, "invalid_data", "callback init failed")
 		}
-	}
+	}*/
 	return out
 }
 
@@ -711,7 +903,7 @@ func GetPropertiesSeating(vehicleId VehicleHandle) GetPropertiesSeatingOutput {
 		out.Status = FAILED
 		return out
 	}
-	if len(vehConn.connectedProtocol) == 0 {
+	if len(vehConn.selectedProtocol) == 0 {
 		out.Error = getErrorObject(400, "invalid_data", "vehicle not connected")
 		out.Status = FAILED
 		return out
@@ -826,9 +1018,10 @@ func removeConnection(vehConn **VehicleConnection, protocol string) {
 		for *iterator != nil {
 			if (*iterator).protocol == protocol {
 //fmt.Printf("removeConnection: removed\n")
-				if (*vehConn).connectedProtocol == protocol {
-					(*vehConn).connectedProtocol = ""
+				if (*vehConn).selectedProtocol == protocol {
+					(*vehConn).selectedProtocol = ""
 				}
+				closeConnection((*iterator).connHandle, protocol)
 				*iterator =(*iterator).next
 				break
 			}
@@ -837,6 +1030,19 @@ func removeConnection(vehConn **VehicleConnection, protocol string) {
 	}
 }
 
+func closeConnection(connHandle interface{}, protocol string) {
+	switch protocol {
+		case "VISSv3.0-wss": fallthrough
+		case "VISSv3.0-ws":
+			connHandle.(*websocket.Conn).Close()
+		case "grpc":
+		case "mqtt":
+		case "http":
+		default: fmt.Printf("%s is unsupportd protocol\n", protocol)
+	}
+}
+
+/*
 func removeSession(connectedDataList **ConnectedData, protocol string) {
 	if *connectedDataList == nil {
 		return
@@ -851,8 +1057,8 @@ fmt.Printf("removeSession: removed\n")
 			iterator = &(*iterator).next
 		}
 	}
-}
-
+}*/
+/*
 func getResponseChan(connectedDataList *ConnectedData, protocol string) chan map[string]interface{} {
 	if connectedDataList == nil {
 		return nil
@@ -866,7 +1072,7 @@ func getResponseChan(connectedDataList *ConnectedData, protocol string) chan map
 		}
 	}
 	return nil
-}
+}*/
 
 /*func getResponseChan(connectedDataList *ConnectedData, messageId string) chan map[string]interface{} {
 	if connectedDataList == nil {
@@ -891,9 +1097,9 @@ fmt.Printf("getResponseChan: activeService.messageId=%s\n", messageId)
 	return nil
 }*/
 
-func removeActiveService(connectedDataList **ConnectedData, protocol string, requestId string) {
+func removeActiveService(connectedDataList **ConnectedData, protocol string, serviceId uint32) {
 	if *connectedDataList == nil {
-		fmt.Printf("removeActiveService: connectedDataList is empty for protocol=%s, requestId=%s\n", protocol, requestId) // should not be possible...
+		fmt.Printf("removeActiveService: connectedDataList is empty for protocol=%s, serviceId=%s\n", protocol, serviceId) // should not be possible...
 		return
 	} else {
 		iterator := connectedDataList
@@ -901,7 +1107,8 @@ func removeActiveService(connectedDataList **ConnectedData, protocol string, req
 			if (*iterator).protocol == protocol {
 				activeServiceIterator := &(*iterator).activeService
 				for *activeServiceIterator != nil {
-					if (*activeServiceIterator).messageId == requestId {
+					if (*activeServiceIterator).serviceId == serviceId {
+//fmt.Printf("removeActiveService: removed\n")
 						*activeServiceIterator = nil
 						return
 					}
@@ -910,9 +1117,10 @@ func removeActiveService(connectedDataList **ConnectedData, protocol string, req
 			}
 			iterator = &(*iterator).next
 		}
+//fmt.Printf("removeActiveService: %d not found\n", serviceId)
 	}
 }
-
+/*
 func updateActiveServiceKey(connectedDataList **ConnectedData, protocol string, requestId string, subscriptionId string) {
 	if *connectedDataList == nil {
 		fmt.Printf("updateActiveServiceKey: connectedDataList is empty for protocol=%s, requestId=%s\n", protocol, requestId) // should not be possible...
@@ -923,8 +1131,8 @@ func updateActiveServiceKey(connectedDataList **ConnectedData, protocol string, 
 			if (*iterator).protocol == protocol {
 				activeServiceIterator := &(*iterator).activeService
 				for *activeServiceIterator != nil {
-					if (*activeServiceIterator).messageId == requestId {
-						(*activeServiceIterator).messageId = subscriptionId
+					if (*activeServiceIterator).subscriptionId == requestId {
+						(*activeServiceIterator).subscriptionId = subscriptionId
 //fmt.Printf("updateActiveServiceKey: updated key %s->%s\n", requestId, subscriptionId)
 						return
 					}
@@ -934,12 +1142,31 @@ func updateActiveServiceKey(connectedDataList **ConnectedData, protocol string, 
 			iterator = &(*iterator).next
 		}
 	}
+}*/
+
+func getActiveServiceId(connectedDataList *ConnectedData, protocol string) uint32 {
+	if connectedDataList == nil {
+		return 0
+	} else {
+		iterator := connectedDataList
+		for iterator != nil {
+			if (*iterator).protocol == protocol {
+				activeServiceIterator := (*iterator).activeService
+				if activeServiceIterator != nil {
+					return (*activeServiceIterator).serviceId
+				}
+			}
+			iterator = (*iterator).next
+		}
+	}
+//	fmt.Printf("getActiveServiceId: no match for protocol=%s\n", protocol)
+	return 0
 }
 
-func getCancelData(connectedDataList *ConnectedData, protocol string, serviceId uint32) (string, string, string) {
+func getCancelData(connectedDataList *ConnectedData, protocol string, serviceId uint32) string {
 	if connectedDataList == nil {
 		fmt.Printf("getCancelData: connectedDataList is empty for protocol=%s, serviceId=%d\n", protocol, serviceId)
-		return "", "", ""
+		return ""
 	} else {
 		iterator := connectedDataList
 		for iterator != nil {
@@ -947,7 +1174,7 @@ func getCancelData(connectedDataList *ConnectedData, protocol string, serviceId 
 				activeServiceIterator := (*iterator).activeService
 				for activeServiceIterator != nil {
 					if (*activeServiceIterator).serviceId == serviceId {
-						return (*activeServiceIterator).messageId, (*activeServiceIterator).path, (*activeServiceIterator).value
+						return (*activeServiceIterator).messageId
 					}
 					activeServiceIterator = (*activeServiceIterator).next
 				}
@@ -955,10 +1182,113 @@ func getCancelData(connectedDataList *ConnectedData, protocol string, serviceId 
 			iterator = (*iterator).next
 		}
 	}
-	fmt.Printf("getCancelData: no match for protocol=%s, serviceId=%d\n", protocol, serviceId)
-	return "", "", ""
+	return ""
 }
 
+func getMessageChan(connectedDataList *ConnectedData, protocol string, messageId string) chan map[string]interface{} {
+	if connectedDataList == nil {
+		fmt.Printf("getMessageChan: connectedDataList is empty for protocol=%s, messageId=%s\n", protocol, messageId)
+		return nil
+	} else {
+		iterator := connectedDataList
+		for iterator != nil {
+			if (*iterator).protocol == protocol {
+				activeServiceIterator := &(*iterator).activeService
+				for *activeServiceIterator != nil {
+					if (*activeServiceIterator).messageId == messageId {
+						return (*activeServiceIterator).messageChan
+					}
+					activeServiceIterator = &(*activeServiceIterator).next
+				}
+			}
+			iterator = (*iterator).next
+		}
+	}
+	fmt.Printf("getMessageChan: no match for protocol=%s, messageId=%s\n", protocol, messageId)
+	return nil
+}
+
+func getProtocol(connectedDataList **ConnectedData, serviceId uint32) string {
+	if *connectedDataList == nil {
+		return ""
+	} else {
+		iterator := connectedDataList
+		for *iterator != nil {
+//			if (*iterator).protocol == protocol {
+				activeServiceIterator := &(*iterator).activeService
+				for *activeServiceIterator != nil {
+					if (*activeServiceIterator).serviceId == serviceId {
+//						(*activeServiceIterator).messageId = subscriptionId
+//						(*activeServiceIterator).cancelChan = cancelChan
+						return (*iterator).protocol
+					}
+					activeServiceIterator = &(*activeServiceIterator).next
+				}
+//			}
+			iterator = &(*iterator).next
+		}
+	}
+	return ""
+}
+
+func saveCancelHandle(connectedDataList **ConnectedData, protocol string, serviceId uint32, subscriptionId string, cancelChan chan string) bool {
+	if *connectedDataList == nil {
+		return false
+	} else {
+		iterator := connectedDataList
+		for *iterator != nil {
+			if (*iterator).protocol == protocol {
+				activeServiceIterator := &(*iterator).activeService
+				for *activeServiceIterator != nil {
+					if (*activeServiceIterator).serviceId == serviceId {
+						(*activeServiceIterator).messageId = subscriptionId
+						(*activeServiceIterator).cancelChan = cancelChan
+						return true
+					}
+					activeServiceIterator = &(*activeServiceIterator).next
+				}
+			}
+			iterator = &(*iterator).next
+		}
+	}
+	return false
+}
+
+func addActiveService(connectedDataList **ConnectedData, protocol string, serviceId uint32, messageId string) chan map[string]interface{} {
+	messageChan := make(chan map[string]interface{})
+	if *connectedDataList == nil {
+		return nil
+	} else {
+		iterator := connectedDataList
+		for *iterator != nil {
+			if (*iterator).protocol == protocol {
+				activeServiceIterator := &(*iterator).activeService
+				if *activeServiceIterator == nil {
+					var activeService ActiveService
+					activeService.messageChan = messageChan
+					activeService.serviceId = serviceId
+					activeService.messageId = messageId
+					*activeServiceIterator = &activeService
+					return messageChan
+				}
+				for *activeServiceIterator != nil {
+					if (*activeServiceIterator).next == nil {
+						var activeService ActiveService
+						activeService.messageChan = messageChan
+						activeService.serviceId = serviceId
+						activeService.messageId = messageId
+						(*activeServiceIterator).next = &activeService
+						return messageChan
+					}
+					activeServiceIterator = &(*activeServiceIterator).next
+				}
+			}
+			iterator = &(*iterator).next
+		}
+	}
+	return nil
+}
+/*
 func saveReturnHandle(connectedDataList **ConnectedData, protocol string, path string, cancelValue string, serviceId uint32, requestId string, responseChan chan map[string]interface{}, callback interface{}) bool {
 	if *connectedDataList == nil {
 		return false
@@ -996,7 +1326,7 @@ func saveReturnHandle(connectedDataList **ConnectedData, protocol string, path s
 		}
 	}
 	return false
-}
+}*/
 
 func getConnHandle(connectedDataList *ConnectedData, protocol string) interface{} {
 	if connectedDataList == nil {
@@ -1077,12 +1407,15 @@ func getErrorInfo(errorMap map[string]interface{}) *ErrorData {
 	return &errorInfo
 }
 
-func sendMessage(vehicle *VehicleConnection, clientMessage string) {
-	switch vehicle.connectedProtocol {
+func sendMessage(vehicle *VehicleConnection, protocol string, clientMessage string) {
+	if len(protocol) == 0 {
+		protocol = vehicle.selectedProtocol
+	}
+	switch protocol {
 		case "VISSv3.0-wss": fallthrough
 		case "VISSv3.0-ws":
 			conn := getConnHandle(vehicle.connectedData, "VISSv3.0-ws").(*websocket.Conn)
-			sendMessageWs(vehicle, conn, clientMessage)
+			sendMessageWs(conn, clientMessage)
 		case "grpc":
 		case "mqtt":
 		case "http":
@@ -1090,14 +1423,61 @@ func sendMessage(vehicle *VehicleConnection, clientMessage string) {
 	}
 }
 
-func sendMessageWs(vehConn *VehicleConnection, conn *websocket.Conn, clientMessage string) {
+func sendMessageWs(conn *websocket.Conn, clientMessage string) {
 	err := conn.WriteMessage(websocket.BinaryMessage, []byte(clientMessage))
 	if err != nil {
 		fmt.Printf("Request error:%s\n", err)
 	}
 }
 
-func receiveMessageWs(vehicleId VehicleHandle, conn *websocket.Conn, eventChan chan map[string]interface{}) {
+func initReceiveMessage(vehicle *VehicleConnection, protocol string) {
+	if len(protocol) == 0 {
+		protocol = vehicle.selectedProtocol
+	}
+	switch protocol {
+		case "VISSv3.0-wss": fallthrough
+		case "VISSv3.0-ws":
+			for{
+				conn := getConnHandle(vehicle.connectedData, "VISSv3.0-ws").(*websocket.Conn)
+				if conn == nil {
+//fmt.Printf("receiveMessageWs: terminating\n")
+					return
+				}
+				_, message, err := conn.ReadMessage()
+				if err != nil {
+//fmt.Printf("receiveMessageWs: terminating\n")
+					return
+				}
+				fmt.Printf("receiveMessageWs: message=%s\n", string(message))
+				var messageMap map[string]interface{}
+				err = json.Unmarshal(message, &messageMap)
+				if err != nil {
+					fmt.Printf("initReceiveMessage:error message=%s, err=%s", message, err)
+					continue
+				}
+				messageId := extractMessageId(messageMap)
+				messageChan := getMessageChan(vehicle.connectedData, protocol, messageId)
+				if messageChan != nil {
+					messageChan <- messageMap
+				}
+			}
+		case "grpc": //TBI
+		case "mqtt": //TBI
+		case "http": //TBI
+	}
+}
+
+func extractMessageId(messageMap map[string]interface{}) string {
+	if messageMap["requestId"] != nil {
+		return messageMap["requestId"].(string)
+	}
+	if messageMap["subscriptionId"] != nil {
+		return messageMap["subscriptionId"].(string)
+	}
+	return ""	
+}
+
+/*func receiveMessageWs(vehicleId VehicleHandle, conn *websocket.Conn, eventChan chan map[string]interface{}) {
 	var responseChan chan map[string]interface{}
 	for {
 		_, message, err := conn.ReadMessage()
@@ -1122,7 +1502,7 @@ fmt.Printf("receiveMessageWs: message=%s\n", string(message))
 			continue
 		}
 		vehConn := getVehicleConnection(vehicleId)
-		protocol := vehConn.connectedProtocol
+		protocol := vehConn.selectedProtocol
 		requestId, subscriptionId := getMessageId(messageMap)
 		if len(requestId) > 0 {
 			responseChan = getResponseChan(vehConn.connectedData, protocol)
@@ -1138,7 +1518,7 @@ fmt.Printf("receiveMessageWs: message=%s\n", string(message))
 			eventChan <- messageMap
 		}
 	}
-}
+}*/
 
 func getMessageId(messageMap map[string]interface{}) (string, string) {
 	requestId := ""
@@ -1265,7 +1645,7 @@ func eventHandler(eventChan chan map[string]interface{}) {
 }
 
 func getCallback(subcriptionId string) interface{} {
-	if vehConnList == nil {
+/*	if vehConnList == nil {
 		return nil
 	} else {
 		iterator := vehConnList
@@ -1291,7 +1671,7 @@ func getCallback(subcriptionId string) interface{} {
 			}
 			iterator = iterator.next
 		}
-	}
+	}*/
 	return nil
 }
 
@@ -1513,4 +1893,17 @@ func checkSupport(seatId MatrixId, support string, supportType string) bool {
 			}
 	}
 	return false
+}
+
+func isSupportedMovement(seatId MatrixId, movementType string) bool {
+	return checkSupport(seatId, movementType, "move")
+}
+
+func findConfIndex(serviceId uint32, moveOut []MoveSeatOutput) int {
+	for i := 0; i < len(moveOut); i++ {
+		if serviceId == moveOut[i].ServiceId {
+			return i
+		}
+	}
+	return -1
 }
