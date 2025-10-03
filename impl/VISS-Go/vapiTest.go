@@ -59,12 +59,21 @@ func massageOutUnpack(massageOut VapiViss.MassageOutput) {
 }
 
 func showServiceStatus(status VapiViss.ProcedureStatus, err *VapiViss.ErrorData) {
-	fmt.Printf("Call status=%d\n", status)
+	fmt.Printf("Call status=%s\n", translateStatus(status))
 	if err != nil {
 		fmt.Printf("Error code=%d\n", err.Code)
 		fmt.Printf("Error reason=%s\n", err.Reason)
 		fmt.Printf("Error status=%s\n", err.Description)
 	}
+}
+
+func translateStatus(status VapiViss.ProcedureStatus) string {
+	switch status {
+		case VapiViss.SUCCESSFUL: return "SUCCESSFUL"
+		case VapiViss.ONGOING: return "ONGOING"
+		case VapiViss.FAILED: return "FAILED"
+	}
+	return "UNKNOWN"
 }
 
 func main() {

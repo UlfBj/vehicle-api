@@ -11,22 +11,14 @@ package VapiViss
 import (
 	"fmt"
 	"encoding/json"
-//	"io"
-//	"io/fs"
-//	"net/http"
-//	"os"
 	"strconv"
 	"strings"
 	"time"
-//	"math"
 	"math/rand"
 
 	"flag"
 	"net/url"
 	"github.com/gorilla/websocket"
-//	"github.com/akamensky/argparse"
-//	"github.com/covesa/vissr/utils"
-//	"github.com/google/uuid"
 )
 
 type Percentage float32  // min = 0, max = 100
@@ -88,7 +80,6 @@ type VehicleConnection struct {
 }
 
 var vehConnList *VehicleConnection
-var eventChan chan map[string]interface{}
 
 type VehicleHandle uint32
 
@@ -160,10 +151,6 @@ func GetVehicle(vehicleGuid string) GetVehicleOutput {
 		out.Protocol[i] = vehConn.connectivitySupport[i].Protocol
 	}
 	out.Status = SUCCESSFUL
-	if eventChan == nil {
-		eventChan = make(chan map[string]interface{})
-		go eventHandler(eventChan)
-	}
 	return out
 }
 
@@ -282,29 +269,10 @@ func GetMetadata(vehicleId VehicleHandle, path string, stCredentials string) Get
 	requestId := generateRandomString()
 	messageChan := addActiveService(&vehConn.connectedData, vehConn.selectedProtocol, serviceId, requestId)
 	clientMessage := `{"action":"get", "path":"` + path + filterParam + stCredParam + `, "requestId":"` + requestId + `"}`
-//	clientMessage := `{"action":"get", "path":"` + path + "\"" + filterParam + stCredParam + `, "requestId":"` + requestId + `"}`
 	sendMessage(vehConn, "", clientMessage)
 	responseMap := <- messageChan
 	removeActiveService(&vehConn.connectedData, vehConn.selectedProtocol, serviceId)
 	return reformatOutput(responseMap, "getmetadata").(GetMetadataOutput)
-/*	return reformatOutput(responseMap, "get").(GetOutput)
-	requestId := generateRandomString()
-	clientMessage := `{"action":"get", "path":"` + path + filterParam + stCredParam + `, "requestId":"` + requestId + `"}`
-	responseChan := make(chan map[string]interface{})
-	ok := saveReturnHandle(&vehConn.connectedData, vehConn.selectedProtocol, "", "", 0, requestId, responseChan, nil)
-	if !ok {
-		var out GetMetadataOutput
-		out.Status = FAILED
-		out.Error = getErrorObject(400, "invalid_data", "Vehicle connection is lost")
-		return out
-	}
-	sendMessage(vehConn, "", clientMessage)
-	var responseMap map[string]interface{}
-	select {
-		case responseMap = <- responseChan:  //wait for response from receiveMessage
-		
-	}
-	return reformatOutput(responseMap, "getmetadata").(GetMetadataOutput)*/
 }
 
 func ServiceInquiry(vehicleId VehicleHandle) ServiceInquiryOutput {
@@ -441,7 +409,7 @@ func subscribeCore(vehicleId VehicleHandle, path string, cancelValue string, fil
 			}
 		}
 	}()
-	out.Status = SUCCESSFUL
+	out.Status = ONGOING
 	out.Data = nil
 	out.ServiceId = serviceId
 	return out
@@ -477,26 +445,7 @@ func CancelService(vehicleId VehicleHandle, serviceId uint32) GeneralOutput {
 		return out
 	}
 	Unsubscribe(vehicleId, serviceId)
-//	removeActiveService(&vehConn.connectedData, vehConn.selectedProtocol, serviceId)
-/*	subscriptionId := getCancelData(vehConn.connectedData, vehConn.selectedProtocol, serviceId)
-	if len(value) == 0 {
-		getOut := Get(vehicleId, path, "", "")
-		if getOut.Status == SUCCESSFUL {
-			value = getOut.Data[0].Dp[0].Value
-		}
-	}
-	if len(value) != 0 {
-		unsubOut := Unsubscribe(vehicleId, serviceId)
-		if unsubOut.Status == SUCCESSFUL {
-			setOut := Set(vehicleId, path, value, "")
-			if setOut.Status == SUCCESSFUL {
-				return GeneralOutput{SUCCESSFUL, nil}
-			}
-		}
-	}*/
-//	var out GeneralOutput
 	out.Status = SUCCESSFUL
-//	out.Error = getErrorObject(502, "bad_gateway", "Cancelling of service failed")
 	return out
 }
 
@@ -660,11 +609,10 @@ func MoveSeat(vehicleId VehicleHandle, seatId MatrixId, movementType string, pos
 	currPos, _ := strconv.Atoi(getOut.Data[0].Dp[0].Value)
 	out.Position = (Percentage(currPos)-B)/A
 	out.Status = ONGOING
-/*******/
 	serviceId := generateRandomUint32()
 	out.ServiceId = serviceId
 	requestId := generateRandomString()
-	filter := `{"variant":"timebased","parameter":{"period":"500"}}`
+	filter := `{"variant":"timebased","parameter":{"period":"1000"}}`
 	filterParam := `, "filter":` + filter
 	stCredParam := ""
 	if stCredentials != "" {
@@ -713,7 +661,6 @@ func MoveSeat(vehicleId VehicleHandle, seatId MatrixId, movementType string, pos
 					return
 				}
 			case <- cancelChan:
-//				removeActiveService(&vehConn.connectedData, vehConn.selectedProtocol, serviceId)
 				return
 			}
 		}
@@ -722,56 +669,63 @@ func MoveSeat(vehicleId VehicleHandle, seatId MatrixId, movementType string, pos
 }
 
 func ConfigureSeat(vehicleId VehicleHandle, seatId MatrixId, configuration []SeatConfig, stCredentials string, callback func(ConfigureSeatOutput)) ConfigureSeatOutput {
-	var out ConfigureSeatOutput
+	var respOut ConfigureSeatOutput
 	vehConn := getVehicleConnection(vehicleId)
 	if vehConn == nil {
-		out.Status = FAILED
-		out.Error = getErrorObject(400, "invalid_data", "Vehicle is not connected")
-		return out
+		respOut.Status = FAILED
+		respOut.Error = getErrorObject(400, "invalid_data", "Vehicle is not connected")
+		return respOut
 	}
 	go func() {
-	var out ConfigureSeatOutput
-	out.Status = ONGOING
-	moveOut := make([]MoveSeatOutput, len(configuration))
-	moveSeatCb := func(cbOut MoveSeatOutput) {
-		confIndex := findConfIndex(cbOut.ServiceId, moveOut)
-		if confIndex != -1 {
-			moveOut[confIndex].Status = cbOut.Status
-			moveOut[confIndex].Error = cbOut.Error
-			moveOut[confIndex].Position = cbOut.Position
-		}
-	}
-	for i := 0; i < len(configuration); i++ {
-		if isSupportedMovement(seatId, configuration[i].MovementType) {
-			moveOut[i] = MoveSeat(vehicleId, seatId, configuration[i].MovementType, configuration[i].Position, stCredentials, moveSeatCb)
-			out.Configured = append(out.Configured, configuration[i])
-		} else {
-			out.Unconfigured = append(out.Unconfigured, configuration[i].MovementType)
-		}
-	}
-	done := false
-	for !done {
-		for i :=0; i < len(moveOut); i++ {
-			out.Status = SUCCESSFUL
-			if moveOut[i].Status == FAILED {
-				out.Status = FAILED
-				out.Error = moveOut[i].Error
-				done = true
-				break
-			} else if moveOut[i].Status == ONGOING {
-				out.Status = ONGOING
-				break
+		var eventOut ConfigureSeatOutput
+		eventOut.Status = ONGOING
+		moveOut := make([]MoveSeatOutput, len(configuration))
+		var serviceIdMap []uint32
+
+		moveSeatCb := func(cbOut MoveSeatOutput) {
+			confIndex := findConfIndex(cbOut.ServiceId, moveOut)
+			if confIndex != -1 {
+				moveOut[confIndex].Status = cbOut.Status
+				moveOut[confIndex].Error = cbOut.Error
+				moveOut[confIndex].Position = cbOut.Position
 			}
 		}
-		callback(out)
-		if out.Status == SUCCESSFUL{
-			done = true
+
+		for i := 0; i < len(configuration); i++ {
+			if isSupportedMovement(seatId, configuration[i].MovementType) {
+				moveOut[i] = MoveSeat(vehicleId, seatId, configuration[i].MovementType, configuration[i].Position, stCredentials, moveSeatCb)
+				eventOut.Configured = append(eventOut.Configured, configuration[i])
+				serviceIdMap = append(serviceIdMap, moveOut[i].ServiceId)
+			} else {
+				eventOut.Unconfigured = append(eventOut.Unconfigured, configuration[i].MovementType)
+			}
 		}
-		time.Sleep(1 * time.Second)
-	}
+		done := false
+		for !done {
+			for i :=0; i < len(moveOut); i++ {
+				if moveOut[i].Status == FAILED {
+					eventOut.Status = FAILED
+					eventOut.Error = moveOut[i].Error
+					done = true
+					break
+				} else if moveOut[i].Status == ONGOING {
+					for i := 0; i < len(eventOut.Configured); i++ {
+						eventOut.Configured[i].Position = getMoveTypePosition(serviceIdMap[i], moveOut)
+					}
+					eventOut.Status = ONGOING
+					break
+				}
+			}
+			if seatConfigComplete(eventOut, configuration) {
+				eventOut.Status = SUCCESSFUL
+				done = true
+			}
+			callback(eventOut)
+			time.Sleep(1 * time.Second)
+		}
 	}()
-	out.Status = ONGOING
-	return out
+	respOut.Status = ONGOING
+	return respOut
 }
 
 func ActivateMassage(vehicleId VehicleHandle, seatId MatrixId, massageType string, intensity Percentage, duration uint32, stCredentials string, callback func(MassageOutput)) MassageOutput {
@@ -815,7 +769,6 @@ func ActivateMassage(vehicleId VehicleHandle, seatId MatrixId, massageType strin
 		out.Error = setOut.Error
 		return out
 	}
-/****************/
 	serviceId := generateRandomUint32()
 	out.ServiceId = serviceId
 	requestId := generateRandomString()
@@ -867,31 +820,14 @@ func ActivateMassage(vehicleId VehicleHandle, seatId MatrixId, massageType strin
 				}
 				if messageMap["error"] != nil || out.Status == SUCCESSFUL {
 					Unsubscribe(vehicleId, serviceId)
-//					removeActiveService(&vehConn.connectedData, vehConn.selectedProtocol, serviceId)
 					return
 				}
 			case <- cancelChan:
-//				removeActiveService(&vehConn.connectedData, vehConn.selectedProtocol, serviceId)
 				return
 			}
 		}
 	}()
-/*	if callback != nil {
-		serviceId := generateRandomUint32()
-		if duration == 0 || duration > 24 * 3600 {
-			duration = 24 * 3600  //24 hours limit
-		}
-		callbackInterceptor := makeCallbackInterceptorDuration(vehicleId, callback, serviceId, time.Now().Add(time.Duration(float64(duration)*1e9)))
-		filter := `{"variant":"timebased","parameter":{"period":"1000"}}`
-		subOut := subscribeCore(vehicleId, massageOnPath, "false", filter, stCredentials, serviceId, callbackInterceptor)
-		if subOut.Status == SUCCESSFUL {
-			out.Status = ONGOING
-			out.ServiceId = serviceId
-		} else {
-			out.Status = FAILED
-			out.Error = getErrorObject(400, "invalid_data", "callback init failed")
-		}
-	}*/
+	out.Status = ONGOING
 	return out
 }
 
@@ -1042,61 +978,6 @@ func closeConnection(connHandle interface{}, protocol string) {
 	}
 }
 
-/*
-func removeSession(connectedDataList **ConnectedData, protocol string) {
-	if *connectedDataList == nil {
-		return
-	} else {
-		iterator := connectedDataList
-		for *iterator != nil {
-			if (*iterator).protocol == protocol {
-fmt.Printf("removeSession: removed\n")
-				*iterator =(*iterator).next
-				break
-			}
-			iterator = &(*iterator).next
-		}
-	}
-}*/
-/*
-func getResponseChan(connectedDataList *ConnectedData, protocol string) chan map[string]interface{} {
-	if connectedDataList == nil {
-		return nil
-	} else {
-		iterator := connectedDataList
-		for iterator != nil {
-			if iterator.protocol == protocol {
-				return iterator.responseChan
-			}
-			iterator = iterator.next
-		}
-	}
-	return nil
-}*/
-
-/*func getResponseChan(connectedDataList *ConnectedData, messageId string) chan map[string]interface{} {
-	if connectedDataList == nil {
-		return nil
-	} else {
-		iterator := connectedDataList
-		for iterator != nil {
-			activeServiceIterator := iterator.activeService
-			if activeServiceIterator == nil {
-				continue
-			}
-			for activeServiceIterator != nil {
-				if activeServiceIterator.messageId == messageId {
-fmt.Printf("getResponseChan: activeService.messageId=%s\n", messageId)
-					return activeServiceIterator.responseChan
-				}
-				activeServiceIterator = activeServiceIterator.next
-			}
-			iterator = iterator.next
-		}
-	}
-	return nil
-}*/
-
 func removeActiveService(connectedDataList **ConnectedData, protocol string, serviceId uint32) {
 	if *connectedDataList == nil {
 		fmt.Printf("removeActiveService: connectedDataList is empty for protocol=%s, serviceId=%s\n", protocol, serviceId) // should not be possible...
@@ -1120,29 +1001,6 @@ func removeActiveService(connectedDataList **ConnectedData, protocol string, ser
 //fmt.Printf("removeActiveService: %d not found\n", serviceId)
 	}
 }
-/*
-func updateActiveServiceKey(connectedDataList **ConnectedData, protocol string, requestId string, subscriptionId string) {
-	if *connectedDataList == nil {
-		fmt.Printf("updateActiveServiceKey: connectedDataList is empty for protocol=%s, requestId=%s\n", protocol, requestId) // should not be possible...
-		return
-	} else {
-		iterator := connectedDataList
-		for *iterator != nil {
-			if (*iterator).protocol == protocol {
-				activeServiceIterator := &(*iterator).activeService
-				for *activeServiceIterator != nil {
-					if (*activeServiceIterator).subscriptionId == requestId {
-						(*activeServiceIterator).subscriptionId = subscriptionId
-//fmt.Printf("updateActiveServiceKey: updated key %s->%s\n", requestId, subscriptionId)
-						return
-					}
-					activeServiceIterator = &(*activeServiceIterator).next
-				}
-			}
-			iterator = &(*iterator).next
-		}
-	}
-}*/
 
 func getActiveServiceId(connectedDataList *ConnectedData, protocol string) uint32 {
 	if connectedDataList == nil {
@@ -1214,17 +1072,13 @@ func getProtocol(connectedDataList **ConnectedData, serviceId uint32) string {
 	} else {
 		iterator := connectedDataList
 		for *iterator != nil {
-//			if (*iterator).protocol == protocol {
-				activeServiceIterator := &(*iterator).activeService
-				for *activeServiceIterator != nil {
-					if (*activeServiceIterator).serviceId == serviceId {
-//						(*activeServiceIterator).messageId = subscriptionId
-//						(*activeServiceIterator).cancelChan = cancelChan
-						return (*iterator).protocol
-					}
-					activeServiceIterator = &(*activeServiceIterator).next
+			activeServiceIterator := &(*iterator).activeService
+			for *activeServiceIterator != nil {
+				if (*activeServiceIterator).serviceId == serviceId {
+					return (*iterator).protocol
 				}
-//			}
+				activeServiceIterator = &(*activeServiceIterator).next
+			}
 			iterator = &(*iterator).next
 		}
 	}
@@ -1288,45 +1142,6 @@ func addActiveService(connectedDataList **ConnectedData, protocol string, servic
 	}
 	return nil
 }
-/*
-func saveReturnHandle(connectedDataList **ConnectedData, protocol string, path string, cancelValue string, serviceId uint32, requestId string, responseChan chan map[string]interface{}, callback interface{}) bool {
-	if *connectedDataList == nil {
-		return false
-	} else {
-		iterator := connectedDataList
-		for *iterator != nil {
-			if (*iterator).protocol == protocol {
-				(*iterator).responseChan = responseChan
-				activeServiceIterator := &(*iterator).activeService
-				if *activeServiceIterator == nil {
-					var activeService ActiveService
-					activeService.path = path
-					activeService.value = cancelValue
-					activeService.messageId = requestId
-					activeService.serviceId = serviceId
-					activeService.callback = callback
-					*activeServiceIterator = &activeService
-					return true
-				}
-				for *activeServiceIterator != nil {
-					if (*activeServiceIterator).next == nil {
-						var activeService ActiveService
-						activeService.path = path
-						activeService.value = cancelValue
-						activeService.messageId = requestId
-						activeService.serviceId = serviceId
-						activeService.callback = callback
-						(*activeServiceIterator).next = &activeService
-						return true
-					}
-					activeServiceIterator = &(*activeServiceIterator).next
-				}
-			}
-			iterator = &(*iterator).next
-		}
-	}
-	return false
-}*/
 
 func getConnHandle(connectedDataList *ConnectedData, protocol string) interface{} {
 	if connectedDataList == nil {
@@ -1448,7 +1263,7 @@ func initReceiveMessage(vehicle *VehicleConnection, protocol string) {
 //fmt.Printf("receiveMessageWs: terminating\n")
 					return
 				}
-				fmt.Printf("receiveMessageWs: message=%s\n", string(message))
+//				fmt.Printf("receiveMessageWs: message=%s\n", string(message))
 				var messageMap map[string]interface{}
 				err = json.Unmarshal(message, &messageMap)
 				if err != nil {
@@ -1476,49 +1291,6 @@ func extractMessageId(messageMap map[string]interface{}) string {
 	}
 	return ""	
 }
-
-/*func receiveMessageWs(vehicleId VehicleHandle, conn *websocket.Conn, eventChan chan map[string]interface{}) {
-	var responseChan chan map[string]interface{}
-	for {
-		_, message, err := conn.ReadMessage()
-		if err != nil {
-			select {
-				case <- responseChan:  // terminate message shall be the only possibility...
-//fmt.Printf("receiveMessageWs: terminating\n")
-				return
-				default:
-					if !strings.Contains(err.Error(), "use of closed network connection") { // result of Disconnect/Unsubscribe...
-						fmt.Printf("Server communication error: %s\n", err)
-					}
-					time.Sleep(1 * time.Second)
-					continue
-			}
-		}
-fmt.Printf("receiveMessageWs: message=%s\n", string(message))
-		var messageMap map[string]interface{}
-		err = json.Unmarshal(message, &messageMap)
-		if err != nil {
-			fmt.Printf("receiveMessageWs:error message=%s, err=%s", string(message), err)
-			continue
-		}
-		vehConn := getVehicleConnection(vehicleId)
-		protocol := vehConn.selectedProtocol
-		requestId, subscriptionId := getMessageId(messageMap)
-		if len(requestId) > 0 {
-			responseChan = getResponseChan(vehConn.connectedData, protocol)
-			if len(subscriptionId) == 0 { // response
-				removeActiveService(&vehConn.connectedData, protocol, requestId)
-			} else { // subscribe response
-				updateActiveServiceKey(&vehConn.connectedData, protocol, requestId, subscriptionId)
-			} 
-//			fmt.Printf("Response: %s\n", string(message))
-			responseChan <- messageMap
-		} else if len(subscriptionId) > 0 { // subscription event
-//			fmt.Printf("Event: %s\n", string(message))
-			eventChan <- messageMap
-		}
-	}
-}*/
 
 func getMessageId(messageMap map[string]interface{}) (string, string) {
 	requestId := ""
@@ -1625,56 +1397,6 @@ func populateDpL2(dpMap map[string]interface{}) DataPoint {
 	return dp
 }
 
-func eventHandler(eventChan chan map[string]interface{}) {
-	for {
-		select {
-			case event := <- eventChan:
-			if event["error"] != nil && event["error"] == "VAPI-cancel-session" {
-				break
-			}
-			callback := getCallback(event["subscriptionId"].(string))
-			switch vv := callback.(type) {
-				case func(SubscribeOutput):
-					out := reformatOutput(event, "subscribe").(SubscribeOutput)
-					callback.(func(SubscribeOutput))(out)
-				default:
-					fmt.Println("eventHandler():unknown output type=", vv)
-			}
-		}
-	}
-}
-
-func getCallback(subcriptionId string) interface{} {
-/*	if vehConnList == nil {
-		return nil
-	} else {
-		iterator := vehConnList
-		for iterator != nil {
-			if iterator.connectedData == nil {
-				return nil
-			} else {
-				connectedIterator := iterator.connectedData
-				for connectedIterator != nil {
-					if connectedIterator.activeService == nil {
-						return nil
-					} else {
-						serviceIterator := connectedIterator.activeService
-						for serviceIterator != nil {
-							if serviceIterator.messageId == subcriptionId {
-								return serviceIterator.callback
-							}
-							serviceIterator = serviceIterator.next
-						}
-					}
-					connectedIterator = connectedIterator.next
-				}
-			}
-			iterator = iterator.next
-		}
-	}*/
-	return nil
-}
-
 func reformatOutput(messageMap map[string]interface{}, outputType string) interface{} {
 	switch outputType {
 		case "set":
@@ -1759,7 +1481,7 @@ func getSeatPositionedPath(unpositionedPath string, seatId MatrixId) string { //
 	positionedPath = positionedPath[:index+1] + seatId.ColumnName + positionedPath[index+1+7:]
 	return positionedPath
 }
-
+/*
 func makeCallbackInterceptor(vehicleId VehicleHandle, callback interface{}, serviceId uint32, path string, finalValue string) func(SubscribeOutput) {
 	return func(subOut SubscribeOutput) {
 		var status ProcedureStatus
@@ -1825,7 +1547,7 @@ func makeCallbackInterceptorDuration(vehicleId VehicleHandle, callback interface
 			}
 		}
 	}
-}
+}*/
 
 func getSimulatedProperties() RaggedMatrix {
 	var properties RaggedMatrix
@@ -1906,4 +1628,26 @@ func findConfIndex(serviceId uint32, moveOut []MoveSeatOutput) int {
 		}
 	}
 	return -1
+}
+
+func getMoveTypePosition(serviceId uint32, moveOut []MoveSeatOutput) Percentage {
+	for i := 0; i < len(moveOut); i++ {
+		if serviceId == moveOut[i].ServiceId {
+			return moveOut[i].Position
+		}
+	}
+	return 0 //???
+}
+
+func seatConfigComplete(eventOut ConfigureSeatOutput, configuration []SeatConfig) bool {
+	for i := 0; i < len(eventOut.Configured); i++ {
+		for j := 0; j < len(configuration); j++ {
+			if configuration[j].MovementType == eventOut.Configured[i].MovementType {
+				if configuration[j].Position != eventOut.Configured[i].Position {
+					return false
+				}
+			}
+		}
+	}
+	return true
 }
