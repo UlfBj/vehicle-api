@@ -15,7 +15,6 @@ import (
 	"strings"
 	"time"
 	"math/rand"
-
 	"flag"
 	"net/url"
 	"github.com/gorilla/websocket"
@@ -195,8 +194,9 @@ func Connect(vehicleId VehicleHandle, protocol string, clientCredentials string)
 		if strings.Contains(protocol, "mqtt") || strings.Contains(protocol, "MQTT") {
 			connectedData.clientTopic = generateRandomString()  //needed for VISSv3.0-mqtt
 		}
-		connectedData.connHandle = connectToVehicle(protocol, connectedData.socket)
-		if connectedData.connHandle != nil {
+		var isConnected bool
+		connectedData.connHandle, isConnected = connectToVehicle(protocol, connectedData.socket)
+		if isConnected {
 			addConnectedData(&(vehConn.connectedData), &connectedData)
 			vehConn.selectedProtocol = protocol
 			go initReceiveMessage(vehConn, protocol)
@@ -267,7 +267,7 @@ func GetMetadata(vehicleId VehicleHandle, path string, stCredentials string) Get
 	}
 	serviceId := generateRandomUint32()
 	requestId := generateRandomString()
-	messageChan := addActiveService(&vehConn.connectedData, vehConn.selectedProtocol, serviceId, requestId)
+	messageChan := addActiveService(&vehConn.connectedData, vehConn.selectedProtocol, serviceId, requestId, "")
 	clientMessage := `{"action":"get", "path":"` + path + filterParam + stCredParam + `, "requestId":"` + requestId + `"}`
 	sendMessage(vehConn, "", clientMessage)
 	responseMap := <- messageChan
@@ -320,7 +320,7 @@ func Set(vehicleId VehicleHandle, path string, value string, stCredentials strin
 	}
 	serviceId := generateRandomUint32()
 	requestId := generateRandomString()
-	messageChan := addActiveService(&vehConn.connectedData, vehConn.selectedProtocol, serviceId, requestId)
+	messageChan := addActiveService(&vehConn.connectedData, vehConn.selectedProtocol, serviceId, requestId, "")
 	clientMessage := `{"action":"set", "path":"` + path  + `", "value":"` + value + "\"" + stCredParam + `, "requestId":"` + requestId + `"}`
 	sendMessage(vehConn, "", clientMessage)
 	responseMap := <- messageChan
@@ -346,7 +346,7 @@ func Get(vehicleId VehicleHandle, path string, filter string, stCredentials stri
 	}
 	serviceId := generateRandomUint32()
 	requestId := generateRandomString()
-	messageChan := addActiveService(&vehConn.connectedData, vehConn.selectedProtocol, serviceId, requestId)
+	messageChan := addActiveService(&vehConn.connectedData, vehConn.selectedProtocol, serviceId, requestId, "")
 	clientMessage := `{"action":"get", "path":"` + path + "\"" + filterParam + stCredParam + `, "requestId":"` + requestId + `"}`
 	sendMessage(vehConn, "", clientMessage)
 	responseMap := <- messageChan
@@ -376,7 +376,7 @@ func subscribeCore(vehicleId VehicleHandle, path string, cancelValue string, fil
 		stCredParam = `, "authorization":"` + stCredentials + "\""
 	}
 	requestId := generateRandomString()
-	messageChan := addActiveService(&vehConn.connectedData, vehConn.selectedProtocol, serviceId, requestId)
+	messageChan := addActiveService(&vehConn.connectedData, vehConn.selectedProtocol, serviceId, requestId, "")
 	message := `{"action":"subscribe", "path":"` + path + "\"" + filterParam + stCredParam + `, "requestId":"` + requestId + `"}`
 	sendMessage(vehConn, "", message)
 	messageMap := <- messageChan
@@ -429,7 +429,7 @@ func Unsubscribe(vehicleId VehicleHandle, serviceId uint32) GeneralOutput {
 	requestId := generateRandomString()
 	serviceId = generateRandomUint32()
 	clientMessage := `{"action":"unsubscribe", "subscriptionId":"` + subscriptionId + `", "requestId":"` + requestId + `"}`
-	responseChan := addActiveService(&vehConn.connectedData, protocol, serviceId, requestId)
+	responseChan := addActiveService(&vehConn.connectedData, protocol, serviceId, requestId, "")
 	sendMessage(vehConn, "", clientMessage)
 	responseMap := <- responseChan
 	removeActiveService(&vehConn.connectedData, protocol, serviceId)
@@ -565,6 +565,11 @@ func MoveSeat(vehicleId VehicleHandle, seatId MatrixId, movementType string, pos
 		out.Status = FAILED
 		return out
 	}
+	if isMoving(&vehConn.connectedData, vehConn.selectedProtocol, seatId, movementType) {
+		out.Error = getErrorObject(503, "service_unavailable", "Movement type is busy for this seat")
+		out.Status = FAILED
+		return out
+	}
 	var A, B Percentage
 	switch movementType {
 		case LONGITUDINAL:
@@ -619,7 +624,7 @@ func MoveSeat(vehicleId VehicleHandle, seatId MatrixId, movementType string, pos
 		stCredParam = `, "authorization":"` + stCredentials + "\""
 	}
 	message := `{"action":"subscribe", "path":"` + actuatorPath + "\"" + filterParam + stCredParam + `, "requestId":"` + requestId + `"}`
-	messageChan := addActiveService(&vehConn.connectedData, vehConn.selectedProtocol, serviceId, requestId)
+	messageChan := addActiveService(&vehConn.connectedData, vehConn.selectedProtocol, serviceId, requestId, createMoveSeatName(movementType, seatId))
 	sendMessage(vehConn, "", message)
 	messageMap := <- messageChan
 	if messageMap["error"] != nil {
@@ -782,7 +787,7 @@ func ActivateMassage(vehicleId VehicleHandle, seatId MatrixId, massageType strin
 		stCredParam = `, "authorization":"` + stCredentials + "\""
 	}
 	message := `{"action":"subscribe", "path":"` + massageOnPath + "\"" + filterParam + stCredParam + `, "requestId":"` + requestId + `"}`
-	messageChan := addActiveService(&vehConn.connectedData, vehConn.selectedProtocol, serviceId, requestId)
+	messageChan := addActiveService(&vehConn.connectedData, vehConn.selectedProtocol, serviceId, requestId, "")
 	sendMessage(vehConn, "", message)
 	messageMap := <- messageChan
 	if messageMap["error"] != nil {
@@ -1108,7 +1113,7 @@ func saveCancelHandle(connectedDataList **ConnectedData, protocol string, servic
 	return false
 }
 
-func addActiveService(connectedDataList **ConnectedData, protocol string, serviceId uint32, messageId string) chan map[string]interface{} {
+func addActiveService(connectedDataList **ConnectedData, protocol string, serviceId uint32, messageId string, name string) chan map[string]interface{} {
 	messageChan := make(chan map[string]interface{})
 	if *connectedDataList == nil {
 		return nil
@@ -1119,6 +1124,7 @@ func addActiveService(connectedDataList **ConnectedData, protocol string, servic
 				activeServiceIterator := &(*iterator).activeService
 				if *activeServiceIterator == nil {
 					var activeService ActiveService
+					activeService.name = name
 					activeService.messageChan = messageChan
 					activeService.serviceId = serviceId
 					activeService.messageId = messageId
@@ -1128,6 +1134,7 @@ func addActiveService(connectedDataList **ConnectedData, protocol string, servic
 				for *activeServiceIterator != nil {
 					if (*activeServiceIterator).next == nil {
 						var activeService ActiveService
+						activeService.name = name
 						activeService.messageChan = messageChan
 						activeService.serviceId = serviceId
 						activeService.messageId = messageId
@@ -1304,7 +1311,7 @@ func getMessageId(messageMap map[string]interface{}) (string, string) {
 	return requestId, subscriptionId
 }
 
-func initVissV2WebSocket(socket string) *websocket.Conn {
+func initVissV2WebSocket(socket string) (*websocket.Conn, bool) {
 	scheme := "ws"
 /*	portNum := "8080"
 	if secConfig.TransportSec == "yes" {
@@ -1328,8 +1335,9 @@ func initVissV2WebSocket(socket string) *websocket.Conn {
 	conn, _, err := dialer.Dial(dataSessionUrl.String(), nil)
 	if err != nil {
 		fmt.Printf("Data session dial error:%s\n", err)
+		return nil, false
 	}
-	return conn
+	return conn, true
 }
 
 func populateData(dataMap interface{}) []DataContainer {
@@ -1464,14 +1472,15 @@ func reformatGeneralMessage(messageMap map[string]interface{}) GeneralOutput {
 	return out
 }
 
-func connectToVehicle(protocol string, socket string) interface{} {
+func connectToVehicle(protocol string, socket string) (interface{}, bool) {
 //fmt.Printf("Socket=%s\n", socket)
 	if strings.Contains(protocol, "ws") {
-		return initVissV2WebSocket(socket)  // TODO: switch on protocol
+		conn, isConnected := initVissV2WebSocket(socket)
+		return conn, isConnected  // TODO: switch on protocol
 	} else if strings.Contains(protocol, "grpc") {
-		return nil //not yet implemented
+		return nil, false //not yet implemented
 	}
-	return nil
+	return nil, false
 }
 
 func getSeatPositionedPath(unpositionedPath string, seatId MatrixId) string { // RowX and ColumnY to be replaced
@@ -1580,6 +1589,32 @@ func getSimulatedSupport(row int, column int, support []SupportData) []SupportDa
 		return simSupport
 	}
 	return nil // all other passengers
+}
+
+func isMoving(connectedDataList **ConnectedData, protocol string, seatId MatrixId, movementType string) bool {
+	if *connectedDataList == nil {
+		return false
+	} else {
+		iterator := connectedDataList
+		for *iterator != nil {
+			if (*iterator).protocol == protocol {
+				activeServiceIterator := &(*iterator).activeService
+				moveSeatName := createMoveSeatName(movementType, seatId)
+				for *activeServiceIterator != nil {
+					if (*activeServiceIterator).name == moveSeatName {
+						return true
+					}
+					activeServiceIterator = &(*activeServiceIterator).next
+				}
+			}
+			iterator = &(*iterator).next
+		}
+	}
+	return false
+}
+
+func createMoveSeatName(movementType string, seatId MatrixId) string {
+	return movementType + seatId.RowName + seatId.ColumnName
 }
 
 func checkSupport(seatId MatrixId, support string, supportType string) bool {

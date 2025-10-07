@@ -94,8 +94,9 @@ func main() {
 	fmt.Printf("protocol =%s\n", protocol)
 	vehicle1 := initOut.VehicleId
 	out := VapiViss.Connect(vehicle1, protocol, "")
-	if out.Error != nil {
+	if out.Status != VapiViss.SUCCESSFUL {
 		fmt.Printf("Could not connect to vehicle id =%s. Error = %s.\n", vehicleGuid1, out.Error.Reason)
+		return
 	} else {
 		fmt.Printf("Connected to vehicle id =%s\n", vehicleGuid1)
 	}
