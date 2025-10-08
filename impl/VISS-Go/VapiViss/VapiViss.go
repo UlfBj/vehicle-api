@@ -673,6 +673,11 @@ func MoveSeat(vehicleId VehicleHandle, seatId MatrixId, movementType string, pos
 	return out
 }
 
+type MapData struct { // used in ConfigureSeat for mapping between configuration and configured arrays
+	serviceId uint32
+	index int
+}
+
 func ConfigureSeat(vehicleId VehicleHandle, seatId MatrixId, configuration []SeatConfig, stCredentials string, callback func(ConfigureSeatOutput)) ConfigureSeatOutput {
 	var respOut ConfigureSeatOutput
 	vehConn := getVehicleConnection(vehicleId)
@@ -685,7 +690,7 @@ func ConfigureSeat(vehicleId VehicleHandle, seatId MatrixId, configuration []Sea
 		var eventOut ConfigureSeatOutput
 		eventOut.Status = ONGOING
 		moveOut := make([]MoveSeatOutput, len(configuration))
-		var serviceIdMap []uint32
+		var mapData []MapData
 
 		moveSeatCb := func(cbOut MoveSeatOutput) {
 			confIndex := findConfIndex(cbOut.ServiceId, moveOut)
@@ -699,8 +704,12 @@ func ConfigureSeat(vehicleId VehicleHandle, seatId MatrixId, configuration []Sea
 		for i := 0; i < len(configuration); i++ {
 			if isSupportedMovement(seatId, configuration[i].MovementType) {
 				moveOut[i] = MoveSeat(vehicleId, seatId, configuration[i].MovementType, configuration[i].Position, stCredentials, moveSeatCb)
-				eventOut.Configured = append(eventOut.Configured, configuration[i])
-				serviceIdMap = append(serviceIdMap, moveOut[i].ServiceId)
+				if moveOut[i].Status != FAILED {
+					eventOut.Configured = append(eventOut.Configured, configuration[i])
+					mapData = append(mapData, MapData{moveOut[i].ServiceId, i})
+				} else {
+					eventOut.Unconfigured = append(eventOut.Unconfigured, configuration[i].MovementType)
+				}
 			} else {
 				eventOut.Unconfigured = append(eventOut.Unconfigured, configuration[i].MovementType)
 			}
@@ -708,20 +717,15 @@ func ConfigureSeat(vehicleId VehicleHandle, seatId MatrixId, configuration []Sea
 		done := false
 		for !done {
 			for i :=0; i < len(moveOut); i++ {
-				if moveOut[i].Status == FAILED {
-					eventOut.Status = FAILED
-					eventOut.Error = moveOut[i].Error
-					done = true
-					break
-				} else if moveOut[i].Status == ONGOING {
+				if moveOut[i].Status == ONGOING {
 					for i := 0; i < len(eventOut.Configured); i++ {
-						eventOut.Configured[i].Position = getMoveTypePosition(serviceIdMap[i], moveOut)
+						eventOut.Configured[i].Position = getMoveTypePosition(mapData[i].serviceId, moveOut)
 					}
 					eventOut.Status = ONGOING
 					break
 				}
 			}
-			if seatConfigComplete(eventOut, configuration) {
+			if seatConfigComplete(eventOut, configuration, mapData) {
 				eventOut.Status = SUCCESSFUL
 				done = true
 			}
@@ -1674,11 +1678,11 @@ func getMoveTypePosition(serviceId uint32, moveOut []MoveSeatOutput) Percentage 
 	return 0 //???
 }
 
-func seatConfigComplete(eventOut ConfigureSeatOutput, configuration []SeatConfig) bool {
+func seatConfigComplete(eventOut ConfigureSeatOutput, configuration []SeatConfig, mapData []MapData) bool {
 	for i := 0; i < len(eventOut.Configured); i++ {
 		for j := 0; j < len(configuration); j++ {
 			if configuration[j].MovementType == eventOut.Configured[i].MovementType {
-				if configuration[j].Position != eventOut.Configured[i].Position {
+				if configuration[j].Position != eventOut.Configured[i].Position && mapData[i].index == j {
 					return false
 				}
 			}
